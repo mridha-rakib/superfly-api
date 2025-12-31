@@ -1,0 +1,120 @@
+// file: src/modules/user/user.service.ts (ENHANCED VERSION)
+
+import { ACCOUNT_STATUS, MESSAGES } from "@/constants/app.constants";
+import { logger } from "@/middlewares/pino-logger";
+import { EmailService } from "@/services/email.service";
+import { ConflictException, NotFoundException } from "@/utils/app-error.utils";
+import { hashPassword } from "@/utils/password.utils";
+import type { IUser } from "./user.interface";
+import { UserRepository } from "./user.repository";
+import type { UserCreatePayload, UserResponse } from "./user.type";
+
+export class UserService {
+  private userRepository: UserRepository;
+  private emailService: EmailService;
+
+  constructor() {
+    this.userRepository = new UserRepository();
+    this.emailService = new EmailService();
+  }
+
+  toUserResponse(user: IUser): UserResponse {
+    return {
+      _id: user._id.toString(),
+      email: user.email,
+      fullName: user.fullName,
+      phone: user.phoneNumber || "",
+      address: user.address,
+      role: user.role,
+      accountStatus: user.accountStatus,
+      emailVerified: user.emailVerified,
+      lastLoginAt: user.lastLoginAt,
+      profileImage: user.profileImageUrl || undefined,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+  }
+
+  getUserResponse(user: IUser): UserResponse {
+    return this.toUserResponse(user);
+  }
+
+  async createUser(payload: UserCreatePayload): Promise<IUser> {
+    const existing = await this.userRepository.findByEmail(payload.email);
+    if (existing) {
+      throw new ConflictException(MESSAGES.AUTH.EMAIL_ALREADY_EXISTS);
+    }
+
+    const hashedPassword = payload.password
+      ? await hashPassword(payload.password)
+      : undefined;
+
+    return this.userRepository.create({
+      email: payload.email.toLowerCase(),
+      password: hashedPassword,
+      fullName: payload.fullName,
+      phoneNumber: payload.phoneNumber || payload.phone,
+      address: payload.address,
+      role: payload.role,
+      emailVerified: payload.emailVerified ?? false,
+      accountStatus: payload.accountStatus ?? ACCOUNT_STATUS.PENDING,
+    });
+  }
+
+  async getUserByEmail(email: string): Promise<IUser | null> {
+    return this.userRepository.findByEmail(email);
+  }
+
+  async getUserByEmailWithPassword(email: string): Promise<IUser | null> {
+    return this.userRepository.findByEmailWithPassword(email);
+  }
+
+  async getById(userId: string): Promise<IUser | null> {
+    return this.userRepository.findById(userId);
+  }
+
+  async getUserByIdWithPassword(userId: string): Promise<IUser | null> {
+    return this.userRepository.findByIdWithPassword(userId);
+  }
+
+  async markEmailAsVerified(userId: string): Promise<IUser | null> {
+    return this.userRepository.markEmailAsVerified(userId);
+  }
+
+  async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+    await this.userRepository.updatePassword(userId, hashedPassword);
+  }
+
+  async updateLastLogin(userId: string): Promise<void> {
+    await this.userRepository.updateLastLogin(userId);
+  }
+
+  async invalidateAllRefreshTokens(userId: string): Promise<void> {
+    await this.userRepository.deleteAllRefreshTokens(userId);
+  }
+
+  async notifyPasswordChange(
+    email: string,
+    fullName: string,
+    changedAt: Date
+  ): Promise<void> {
+    try {
+      await this.emailService.sendPasswordChangeNotification({
+        to: email,
+        userName: fullName,
+        changedAt,
+      });
+    } catch (error) {
+      logger.warn({ email, error }, "Password change notification failed");
+    }
+  }
+
+  async getProfile(userId: string): Promise<UserResponse> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException(MESSAGES.USER.USER_NOT_FOUND);
+    }
+
+    return this.toUserResponse(user);
+  }
+}
