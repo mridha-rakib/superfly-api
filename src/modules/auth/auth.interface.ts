@@ -6,7 +6,7 @@ export interface IRegisterRequest {
   fullName: string;
   phoneNumber: string;
   address: string;
-  role: "admin" | "cleaner" | "client";
+  role?: "client";
 }
 
 export interface ILoginRequest {

@@ -7,6 +7,7 @@ export const APP = {
 } as const;
 
 export const ROLES = {
+  SUPER_ADMIN: "super_admin",
   CLIENT: "client",
   CLEANER: "cleaner",
   ADMIN: "admin",
@@ -50,6 +51,18 @@ export const AUTH = {
 
 export const QUOTE = {
   CURRENCY: "USD",
+  SERVICE_TYPES: {
+    RESIDENTIAL: "residential",
+    COMMERCIAL: "commercial",
+    POST_CONSTRUCTION: "post_construction",
+  },
+  STATUSES: {
+    SUBMITTED: "submitted",
+    ADMIN_NOTIFIED: "admin_notified",
+    REVIEWED: "reviewed",
+    CONTACTED: "contacted",
+    PAID: "paid",
+  },
 } as const;
 
 export const MESSAGES = {

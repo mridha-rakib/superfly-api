@@ -1,6 +1,11 @@
 // file: src/modules/auth/auth.service.ts
 
-import { ACCOUNT_STATUS, AUTH, MESSAGES } from "@/constants/app.constants";
+import {
+  ACCOUNT_STATUS,
+  AUTH,
+  MESSAGES,
+  ROLES,
+} from "@/constants/app.constants";
 import { env } from "@/env";
 import { logger } from "@/middlewares/pino-logger";
 import { EmailService } from "@/services/email.service";
@@ -97,13 +102,17 @@ export class AuthService {
     user: UserResponse;
     verification: { expiresAt: Date; expiresInMinutes: number };
   }> {
+    if (payload.role && payload.role !== ROLES.CLIENT) {
+      throw new BadRequestException("Only clients can register");
+    }
+
     const user = await this.userService.createUser({
       email: payload.email,
       password: payload.password,
       fullName: payload.fullName,
       phoneNumber: payload.phoneNumber,
       address: payload.address,
-      role: payload.role,
+      role: ROLES.CLIENT,
       emailVerified: false,
       accountStatus: ACCOUNT_STATUS.PENDING,
     });

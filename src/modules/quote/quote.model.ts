@@ -10,14 +10,28 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     ref: "User",
     index: true,
   },
-  firstName: {
+  serviceType: {
     type: String,
     required: true,
+    enum: Object.values(QUOTE.SERVICE_TYPES),
+    default: QUOTE.SERVICE_TYPES.RESIDENTIAL,
+    index: true,
+  },
+  status: {
+    type: String,
+    enum: Object.values(QUOTE.STATUSES),
+    index: true,
+  },
+  contactName: {
+    type: String,
+    trim: true,
+  },
+  firstName: {
+    type: String,
     trim: true,
   },
   lastName: {
     type: String,
-    required: true,
     trim: true,
   },
   email: {
@@ -32,10 +46,22 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     required: true,
     trim: true,
   },
+  companyName: {
+    type: String,
+    trim: true,
+  },
+  businessAddress: {
+    type: String,
+    trim: true,
+  },
   serviceDate: {
     type: String,
     required: true,
     index: true,
+  },
+  preferredTime: {
+    type: String,
+    trim: true,
   },
   notes: {
     type: String,
@@ -52,38 +78,32 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
   ],
   currency: {
     type: String,
-    required: true,
-    default: QUOTE.CURRENCY,
   },
   totalPrice: {
     type: Number,
-    required: true,
     min: 0,
   },
   paymentIntentId: {
     type: String,
-    required: true,
     index: true,
   },
   paymentAmount: {
     type: Number,
-    required: true,
     min: 0,
   },
   paymentStatus: {
     type: String,
-    required: true,
-    default: "paid",
   },
   paidAt: {
     type: Date,
-    required: true,
-    default: Date.now,
+  },
+  adminNotifiedAt: {
+    type: Date,
   },
 });
 
 quoteSchema.index({ userId: 1, createdAt: -1 });
 quoteSchema.index({ email: 1, createdAt: -1 });
-quoteSchema.index({ paymentIntentId: 1 }, { unique: true });
+quoteSchema.index({ paymentIntentId: 1 }, { unique: true, sparse: true });
 
 export const Quote = model<IQuote>("Quote", quoteSchema);

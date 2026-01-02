@@ -14,6 +14,7 @@ import type { Document, Types } from "mongoose";
  * User type enum - extensible for any user role
  */
 export enum UserType {
+  SUPER_ADMIN = "super_admin",
   ADMIN = "admin",
   CLEANER = "cleaner",
   CLIENT = "client",

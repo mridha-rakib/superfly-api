@@ -12,7 +12,7 @@ export type RegisterPayload = {
   fullName: string;
   phoneNumber: string;
   address: string;
-  role: (typeof ROLES)[keyof typeof ROLES];
+  role?: (typeof ROLES)["CLIENT"];
 };
 
 export type LoginPayload = {

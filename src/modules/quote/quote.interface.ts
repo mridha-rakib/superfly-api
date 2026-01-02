@@ -1,5 +1,17 @@
 import type { Document, Types } from "mongoose";
 
+export type QuoteServiceType =
+  | "residential"
+  | "commercial"
+  | "post_construction";
+
+export type QuoteStatus =
+  | "submitted"
+  | "admin_notified"
+  | "reviewed"
+  | "contacted"
+  | "paid";
+
 export interface IQuoteServiceItem {
   key: string;
   label: string;
@@ -11,19 +23,26 @@ export interface IQuoteServiceItem {
 export interface IQuote extends Document {
   _id: Types.ObjectId;
   userId?: Types.ObjectId | string;
-  firstName: string;
-  lastName: string;
+  serviceType: QuoteServiceType;
+  status?: QuoteStatus;
+  contactName?: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   phoneNumber: string;
+  companyName?: string;
+  businessAddress?: string;
   serviceDate: string;
+  preferredTime?: string;
   notes?: string;
-  services: IQuoteServiceItem[];
-  totalPrice: number;
-  currency: string;
-  paymentIntentId: string;
-  paymentAmount: number;
-  paymentStatus: "paid";
-  paidAt: Date;
+  services?: IQuoteServiceItem[];
+  totalPrice?: number;
+  currency?: string;
+  paymentIntentId?: string;
+  paymentAmount?: number;
+  paymentStatus?: "paid";
+  paidAt?: Date;
+  adminNotifiedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

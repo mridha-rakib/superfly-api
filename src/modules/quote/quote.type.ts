@@ -1,3 +1,5 @@
+import type { QuoteServiceType, QuoteStatus } from "./quote.interface";
+
 export type QuoteServiceSelection = Record<string, number | undefined>;
 
 export type QuoteServiceItem = {
@@ -18,22 +20,45 @@ export type QuoteCreatePayload = {
   services: QuoteServiceSelection;
 };
 
+export type QuoteRequestPayload = {
+  serviceType: QuoteServiceType;
+  name?: string;
+  companyName: string;
+  email?: string;
+  phoneNumber?: string;
+  businessAddress: string;
+  preferredDate: string;
+  preferredTime: string;
+  specialRequest: string;
+};
+
+export type QuoteStatusUpdatePayload = {
+  status: QuoteStatus;
+};
+
 export type QuoteResponse = {
   _id: string;
   userId?: string;
-  firstName: string;
-  lastName: string;
+  serviceType: QuoteServiceType;
+  status?: QuoteStatus;
+  contactName?: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   phoneNumber: string;
+  companyName?: string;
+  businessAddress?: string;
   serviceDate: string;
+  preferredTime?: string;
   notes?: string;
-  services: QuoteServiceItem[];
-  totalPrice: number;
-  currency: string;
-  paymentIntentId: string;
-  paymentAmount: number;
-  paymentStatus: "paid";
-  paidAt: Date;
+  services?: QuoteServiceItem[];
+  totalPrice?: number;
+  currency?: string;
+  paymentIntentId?: string;
+  paymentAmount?: number;
+  paymentStatus?: "paid";
+  paidAt?: Date;
+  adminNotifiedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 };

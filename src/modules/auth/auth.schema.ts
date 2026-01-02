@@ -16,7 +16,7 @@ export const registerSchema = z.object({
       fullName: z.string().min(2).max(100),
       phoneNumber: z.string().min(6).max(20),
       address: z.string().min(2).max(250),
-      role: z.enum([ROLES.ADMIN, ROLES.CLEANER, ROLES.CLIENT]),
+      role: z.enum([ROLES.CLIENT]).optional().default(ROLES.CLIENT),
     }),
 });
 
@@ -62,7 +62,9 @@ export const refreshTokenSchema = z.object({
 export const resendVerificationCodeSchema = z.object({
   body: z.object({
     email: z.string().email(MESSAGES.VALIDATION.INVALID_EMAIL),
-    userType: z.enum([ROLES.ADMIN, ROLES.CLEANER, ROLES.CLIENT]).optional(),
+    userType: z
+      .enum([ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.CLEANER, ROLES.CLIENT])
+      .optional(),
     userName: z.string().optional(),
   }),
 });
