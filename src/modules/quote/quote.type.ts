@@ -36,6 +36,10 @@ export type QuoteStatusUpdatePayload = {
   status: QuoteStatus;
 };
 
+export type QuoteAssignCleanerPayload = {
+  cleanerId: string;
+};
+
 export type QuoteResponse = {
   _id: string;
   userId?: string;
@@ -59,6 +63,8 @@ export type QuoteResponse = {
   paymentStatus?: "paid";
   paidAt?: Date;
   adminNotifiedAt?: Date;
+  assignedCleanerId?: string;
+  assignedCleanerAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 };

@@ -43,6 +43,8 @@ export interface IQuote extends Document {
   paymentStatus?: "paid";
   paidAt?: Date;
   adminNotifiedAt?: Date;
+  assignedCleanerId?: Types.ObjectId | string;
+  assignedCleanerAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

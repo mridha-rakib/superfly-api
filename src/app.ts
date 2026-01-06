@@ -32,7 +32,7 @@ app.use(helmet());
 
 app.get<object>("/", (req, res) => {
   res.json({
-    message: "🦄R🌈A✨K👋I🌎B✨M🌈M🦄",
+    message: "SuperFly-service-API",
   });
 });
 

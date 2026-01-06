@@ -72,6 +72,15 @@ export const updateQuoteStatusSchema = z.object({
   }),
 });
 
+export const assignQuoteCleanerSchema = z.object({
+  body: z.object({
+    cleanerId: z.string().min(1),
+  }),
+  params: z.object({
+    quoteId: z.string().min(1),
+  }),
+});
+
 export const confirmQuotePaymentSchema = z.object({
   body: z.object({
     paymentIntentId: z.string().min(1),

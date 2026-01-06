@@ -44,4 +44,18 @@ router.patch(
   quoteController.updateStatus
 );
 
+router.patch(
+  "/:quoteId/assign-cleaner",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.assignCleaner
+);
+
+router.get(
+  "/cleaner/assigned",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.CLEANER),
+  quoteController.listCleanerAssignedQuotes
+);
+
 export default router;

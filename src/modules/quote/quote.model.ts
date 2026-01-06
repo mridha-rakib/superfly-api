@@ -100,6 +100,14 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
   adminNotifiedAt: {
     type: Date,
   },
+  assignedCleanerId: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    index: true,
+  },
+  assignedCleanerAt: {
+    type: Date,
+  },
 });
 
 quoteSchema.index({ userId: 1, createdAt: -1 });

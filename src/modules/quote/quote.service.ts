@@ -1,4 +1,4 @@
-import { QUOTE } from "@/constants/app.constants";
+import { QUOTE, ROLES } from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
 import { stripeService } from "@/services/stripe.service";
 import {
@@ -18,6 +18,7 @@ import { QuoteRepository } from "./quote.repository";
 import type {
   QuoteCreatePayload,
   QuotePaymentIntentResponse,
+  QuoteAssignCleanerPayload,
   QuoteRequestPayload,
   QuoteResponse,
   QuoteStatusUpdatePayload,
@@ -278,6 +279,44 @@ export class QuoteService {
     }
 
     const updated = await this.quoteRepository.updateById(quoteId, update);
+
+    if (!updated) {
+      throw new NotFoundException("Quote not found");
+    }
+
+    return this.toResponse(updated);
+  }
+
+  async assignCleaner(
+    quoteId: string,
+    payload: QuoteAssignCleanerPayload
+  ): Promise<QuoteResponse> {
+    const quote = await this.quoteRepository.findById(quoteId);
+
+    if (!quote) {
+      throw new NotFoundException("Quote not found");
+    }
+
+    const serviceType =
+      quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    if (serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      throw new BadRequestException(
+        "Cleaner assignment is only supported for residential quotes"
+      );
+    }
+
+    const cleaner = await this.userService.getById(payload.cleanerId);
+    if (!cleaner) {
+      throw new NotFoundException("Cleaner not found");
+    }
+    if (cleaner.role !== ROLES.CLEANER) {
+      throw new BadRequestException("Assigned user is not a cleaner");
+    }
+
+    const updated = await this.quoteRepository.updateById(quoteId, {
+      assignedCleanerId: cleaner._id,
+      assignedCleanerAt: new Date(),
+    });
 
     if (!updated) {
       throw new NotFoundException("Quote not found");
@@ -559,6 +598,8 @@ export class QuoteService {
       paymentStatus: quote.paymentStatus,
       paidAt: quote.paidAt,
       adminNotifiedAt: quote.adminNotifiedAt,
+      assignedCleanerId: quote.assignedCleanerId?.toString(),
+      assignedCleanerAt: quote.assignedCleanerAt,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };
