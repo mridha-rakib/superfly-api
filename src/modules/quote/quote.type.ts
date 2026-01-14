@@ -1,4 +1,9 @@
-import type { QuoteServiceType, QuoteStatus } from "./quote.interface";
+import type {
+  QuoteCleaningStatus,
+  QuoteReportStatus,
+  QuoteServiceType,
+  QuoteStatus,
+} from "./quote.interface";
 
 export type QuoteServiceSelection = Record<string, number | undefined>;
 
@@ -65,6 +70,8 @@ export type QuoteResponse = {
   adminNotifiedAt?: Date;
   assignedCleanerId?: string;
   assignedCleanerAt?: Date;
+  cleaningStatus?: QuoteCleaningStatus;
+  reportStatus?: QuoteReportStatus;
   createdAt: Date;
   updatedAt: Date;
 };

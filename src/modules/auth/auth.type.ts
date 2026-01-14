@@ -60,7 +60,6 @@ export type AuthControllerResponse = {
 export type ChangePasswordPayload = {
   currentPassword: string;
   newPassword: string;
-  confirmPassword: string;
 };
 
 /**

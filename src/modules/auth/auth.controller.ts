@@ -145,7 +145,10 @@ export class AuthController {
    */
 
   logout = asyncHandler(async (req: Request, res: Response) => {
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
     // const token = req.headers.authorization?.replace("Bearer ", "") || "";
 
     const authHeader = req.headers.authorization;
@@ -187,7 +190,10 @@ export class AuthController {
    */
   changePassword = asyncHandler(async (req: Request, res: Response) => {
     const validated = await zParse(changePasswordSchema, req);
-    const userId = req.user!.userId;
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
 
     const result = await this.authService.changePassword(
       userId,

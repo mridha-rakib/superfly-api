@@ -1,17 +1,19 @@
-import { QUOTE } from "@/constants/app.constants";
+import { MESSAGES, QUOTE } from "@/constants/app.constants";
 import { asyncHandler } from "@/middlewares/async-handler.middleware";
+import { UnauthorizedException } from "@/utils/app-error.utils";
 import { PaginationHelper } from "@/utils/pagination-helper";
 import { ApiResponse } from "@/utils/response.utils";
 import { zParse } from "@/utils/validators.utils";
 import type { Request, Response } from "express";
 import { Types } from "mongoose";
 import {
+  assignQuoteCleanerSchema,
   confirmQuotePaymentSchema,
   createQuoteAuthSchema,
   createQuoteGuestSchema,
-  assignQuoteCleanerSchema,
   createServiceRequestAuthSchema,
   createServiceRequestGuestSchema,
+  quoteDetailSchema,
   updateQuoteStatusSchema,
 } from "./quote.schema";
 import { QuoteService } from "./quote.service";
@@ -135,8 +137,13 @@ export class QuoteController {
         "serviceType",
         "status",
       ];
+      const userId = req.user?.userId;
+      if (!userId) {
+        throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+      }
+
       const cleanerFilter = {
-        assignedCleanerId: new Types.ObjectId(req.user!.userId),
+        assignedCleanerId: new Types.ObjectId(userId),
       };
 
       if (req.query.page || req.query.limit) {
@@ -173,6 +180,34 @@ export class QuoteController {
       ApiResponse.success(res, data, "Assigned quotes fetched successfully");
     }
   );
+
+  getQuoteById = asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
+    const validated = await zParse(quoteDetailSchema, req);
+    const quote = await this.quoteService.getByIdForAccess(
+      validated.params.quoteId,
+      req.user
+    );
+
+    ApiResponse.success(res, quote, "Quote fetched successfully");
+  });
+
+  markArrived = asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
+
+    const validated = await zParse(quoteDetailSchema, req);
+    const quote = await this.quoteService.markArrived(
+      validated.params.quoteId,
+      userId
+    );
+
+    ApiResponse.success(res, quote, "Cleaning status updated successfully");
+  });
 
   updateStatus = asyncHandler(async (req: Request, res: Response) => {
     const validated = await zParse(updateQuoteStatusSchema, req);

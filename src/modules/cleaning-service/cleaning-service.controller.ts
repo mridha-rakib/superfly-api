@@ -1,4 +1,6 @@
+import { MESSAGES } from "@/constants/app.constants";
 import { asyncHandler } from "@/middlewares/async-handler.middleware";
+import { UnauthorizedException } from "@/utils/app-error.utils";
 import { ApiResponse } from "@/utils/response.utils";
 import { zParse } from "@/utils/validators.utils";
 import type { Request, Response } from "express";
@@ -33,7 +35,10 @@ export class CleaningServiceController {
 
   updatePrice = asyncHandler(async (req: Request, res: Response) => {
     const validated = await zParse(updateCleaningServicePriceSchema, req);
-    const adminId = req.user!.userId;
+    const adminId = req.user?.userId;
+    if (!adminId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
     const result = await this.service.updatePrice(
       req.params.serviceId,
       validated.body,

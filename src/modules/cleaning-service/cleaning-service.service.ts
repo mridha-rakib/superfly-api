@@ -1,4 +1,12 @@
-import { BadRequestException, NotFoundException } from "@/utils/app-error.utils";
+import {
+  BadRequestException,
+  NotFoundException,
+} from "@/utils/app-error.utils";
+import type {
+  ICleaningService,
+  ICleaningServicePriceHistory,
+} from "./cleaning-service.interface";
+import { CleaningServiceRepository } from "./cleaning-service.repository";
 import type {
   CleaningServiceCreatePayload,
   CleaningServicePriceUpdatePayload,
@@ -6,12 +14,7 @@ import type {
   CleaningServiceUpdatePayload,
   PriceHistoryResponse,
 } from "./cleaning-service.type";
-import type {
-  ICleaningService,
-  ICleaningServicePriceHistory,
-} from "./cleaning-service.interface";
 import { CleaningServicePriceHistoryRepository } from "./price-history.repository";
-import { CleaningServiceRepository } from "./cleaning-service.repository";
 
 export class CleaningServiceService {
   private repository: CleaningServiceRepository;
@@ -26,11 +29,8 @@ export class CleaningServiceService {
     payload: CleaningServiceCreatePayload
   ): Promise<CleaningServiceResponse> {
     const nameLower = payload.name.trim().toLowerCase();
-    const category = payload.category?.trim().toLowerCase() || "general";
-    const existing = await this.repository.findByNameAndCategory(
-      nameLower,
-      category
-    );
+
+    const existing = await this.repository.findByNameAndCategory(nameLower);
 
     if (existing) {
       throw new BadRequestException(
@@ -38,14 +38,9 @@ export class CleaningServiceService {
       );
     }
 
-    const code = await this.generateUniqueCode(nameLower);
-
     const service = await this.repository.create({
       name: payload.name.trim(),
       nameLower,
-      code,
-      category,
-      description: payload.description?.trim(),
       price: payload.price,
       isActive: true,
     });
@@ -64,14 +59,8 @@ export class CleaningServiceService {
 
     if (payload.name || payload.category) {
       const nameLower = (payload.name || service.name).trim().toLowerCase();
-      const category = (payload.category || service.category)
-        .trim()
-        .toLowerCase();
 
-      const existing = await this.repository.findByNameAndCategory(
-        nameLower,
-        category
-      );
+      const existing = await this.repository.findByNameAndCategory(nameLower);
 
       if (existing && existing._id.toString() !== serviceId) {
         throw new BadRequestException(
@@ -81,11 +70,6 @@ export class CleaningServiceService {
 
       service.name = payload.name?.trim() || service.name;
       service.nameLower = nameLower;
-      service.category = category;
-    }
-
-    if (payload.description !== undefined) {
-      service.description = payload.description?.trim();
     }
 
     if (payload.isActive !== undefined) {
@@ -149,9 +133,7 @@ export class CleaningServiceService {
     return services.map((service) => this.toResponse(service));
   }
 
-  async getPriceHistory(
-    serviceId?: string
-  ): Promise<PriceHistoryResponse[]> {
+  async getPriceHistory(serviceId?: string): Promise<PriceHistoryResponse[]> {
     const records = serviceId
       ? await this.historyRepository.findByService(serviceId)
       : await this.historyRepository.find({}, { sort: { changedAt: -1 } });
@@ -159,9 +141,7 @@ export class CleaningServiceService {
     return records.map((record) => this.toHistoryResponse(record));
   }
 
-  async getActiveServicesByCodes(
-    codes: string[]
-  ): Promise<ICleaningService[]> {
+  async getActiveServicesByCodes(codes: string[]): Promise<ICleaningService[]> {
     if (codes.length === 0) {
       return this.repository.findActive();
     }
@@ -175,8 +155,6 @@ export class CleaningServiceService {
       _id: service._id.toString(),
       name: service.name,
       code: service.code,
-      category: service.category,
-      description: service.description,
       price: service.price,
       isActive: service.isActive,
       createdAt: service.createdAt,

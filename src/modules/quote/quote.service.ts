@@ -3,6 +3,7 @@ import { logger } from "@/middlewares/pino-logger";
 import { stripeService } from "@/services/stripe.service";
 import {
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from "@/utils/app-error.utils";
@@ -343,6 +344,82 @@ export class QuoteService {
     });
   }
 
+  async getByIdForAccess(
+    quoteId: string,
+    requester: { userId: string; role: string }
+  ): Promise<QuoteResponse> {
+    const quote = await this.quoteRepository.findById(quoteId);
+
+    if (!quote) {
+      throw new NotFoundException("Quote not found");
+    }
+
+    if (requester.role === ROLES.ADMIN || requester.role === ROLES.SUPER_ADMIN) {
+      return this.toResponse(quote);
+    }
+
+    if (requester.role === ROLES.CLEANER) {
+      if (
+        !quote.assignedCleanerId ||
+        quote.assignedCleanerId.toString() !== requester.userId
+      ) {
+        throw new ForbiddenException("Cleaner is not assigned to this quote");
+      }
+      return this.toResponse(quote);
+    }
+
+    if (requester.role === ROLES.CLIENT) {
+      if (!quote.userId || quote.userId.toString() !== requester.userId) {
+        throw new ForbiddenException("Client does not own this quote");
+      }
+      return this.toResponse(quote);
+    }
+
+    throw new ForbiddenException("User is not authorized to access this quote");
+  }
+
+  async markArrived(
+    quoteId: string,
+    clientId: string
+  ): Promise<QuoteResponse> {
+    const quote = await this.quoteRepository.findById(quoteId);
+
+    if (!quote) {
+      throw new NotFoundException("Quote not found");
+    }
+
+    if (quote.serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      throw new BadRequestException(
+        "Arrival updates are only supported for residential quotes"
+      );
+    }
+
+    if (!quote.userId || quote.userId.toString() !== clientId) {
+      throw new ForbiddenException("Client does not own this quote");
+    }
+
+    const currentStatus =
+      quote.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING;
+
+    if (currentStatus === QUOTE.CLEANING_STATUSES.COMPLETED) {
+      throw new BadRequestException("Cleaning is already completed");
+    }
+
+    if (currentStatus === QUOTE.CLEANING_STATUSES.IN_PROGRESS) {
+      return this.toResponse(quote);
+    }
+
+    const updated = await this.quoteRepository.updateById(quoteId, {
+      cleaningStatus: QUOTE.CLEANING_STATUSES.IN_PROGRESS,
+    });
+
+    if (!updated) {
+      throw new NotFoundException("Quote not found");
+    }
+
+    return this.toResponse(updated);
+  }
+
   private async resolveContact(
     payload: QuoteCreatePayload,
     requestUserId?: string
@@ -572,6 +649,14 @@ export class QuoteService {
     const status =
       quote.status ||
       (quote.paymentStatus === "paid" ? QUOTE.STATUSES.PAID : undefined);
+    const cleaningStatus =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? quote.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING
+        : undefined;
+    const reportStatus =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? quote.reportStatus
+        : undefined;
 
     return {
       _id: quote._id.toString(),
@@ -600,6 +685,8 @@ export class QuoteService {
       adminNotifiedAt: quote.adminNotifiedAt,
       assignedCleanerId: quote.assignedCleanerId?.toString(),
       assignedCleanerAt: quote.assignedCleanerAt,
+      cleaningStatus,
+      reportStatus,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };

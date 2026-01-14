@@ -86,3 +86,9 @@ export const confirmQuotePaymentSchema = z.object({
     paymentIntentId: z.string().min(1),
   }),
 });
+
+export const quoteDetailSchema = z.object({
+  params: z.object({
+    quoteId: z.string().min(1),
+  }),
+});

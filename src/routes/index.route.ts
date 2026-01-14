@@ -1,5 +1,6 @@
 import authRouter from "@/modules/auth/auth.route";
 import cleaningServiceRouter from "@/modules/cleaning-service/cleaning-service.route";
+import cleaningReportRouter from "@/modules/cleaning-report/cleaning-report.route";
 import quoteRouter from "@/modules/quote/quote.route";
 import userRouter from "@/modules/user/user.route";
 
@@ -15,6 +16,10 @@ const moduleRoutes = [
   {
     path: "/services",
     route: cleaningServiceRouter,
+  },
+  {
+    path: "/reports",
+    route: cleaningReportRouter,
   },
   {
     path: "/quotes",

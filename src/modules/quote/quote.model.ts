@@ -108,6 +108,17 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
   assignedCleanerAt: {
     type: Date,
   },
+  cleaningStatus: {
+    type: String,
+    enum: Object.values(QUOTE.CLEANING_STATUSES),
+    default: QUOTE.CLEANING_STATUSES.PENDING,
+    index: true,
+  },
+  reportStatus: {
+    type: String,
+    enum: Object.values(QUOTE.REPORT_STATUSES),
+    index: true,
+  },
 });
 
 quoteSchema.index({ userId: 1, createdAt: -1 });

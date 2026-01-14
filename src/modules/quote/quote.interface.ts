@@ -10,7 +10,15 @@ export type QuoteStatus =
   | "admin_notified"
   | "reviewed"
   | "contacted"
-  | "paid";
+  | "paid"
+  | "completed";
+
+export type QuoteCleaningStatus =
+  | "pending"
+  | "cleaning_in_progress"
+  | "completed";
+
+export type QuoteReportStatus = "pending" | "approved";
 
 export interface IQuoteServiceItem {
   key: string;
@@ -45,6 +53,8 @@ export interface IQuote extends Document {
   adminNotifiedAt?: Date;
   assignedCleanerId?: Types.ObjectId | string;
   assignedCleanerAt?: Date;
+  cleaningStatus?: QuoteCleaningStatus;
+  reportStatus?: QuoteReportStatus;
   createdAt: Date;
   updatedAt: Date;
 }

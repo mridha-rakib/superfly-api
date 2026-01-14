@@ -11,6 +11,9 @@ import { errorHandler } from "@/middlewares/error-handler.middleware";
 import { notFound } from "@/middlewares/not-found.middleware";
 import rootRouter from "@/routes/index.route.js";
 
+import swaggerUi from "swagger-ui-express";
+
+import { swaggerSpec, swaggerUiOptions } from "./config/swagger.config.js";
 import { env } from "./env.js";
 import { pinoLogger } from "./middlewares/pino-logger.js";
 
@@ -29,6 +32,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 app.use(helmet());
+
+app.use(
+  "/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    ...swaggerUiOptions,
+    swaggerOptions: {
+      persistAuthorization: true,
+      tagsSorter: "alpha",
+      operationsSorter: "method",
+    },
+  })
+);
 
 app.get<object>("/", (req, res) => {
   res.json({

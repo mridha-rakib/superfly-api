@@ -19,17 +19,12 @@ export class CleaningServiceRepository extends BaseRepository<ICleaningService> 
   }
 
   async findByNameAndCategory(
-    nameLower: string,
-    category: string
+    nameLower: string
   ): Promise<ICleaningService | null> {
-    return this.model
-      .findOne({ nameLower, category, isDeleted: false })
-      .exec();
+    return this.model.findOne({ nameLower, isDeleted: false }).exec();
   }
 
   async findByIds(ids: string[]): Promise<ICleaningService[]> {
-    return this.model
-      .find({ _id: { $in: ids }, isDeleted: false })
-      .exec();
+    return this.model.find({ _id: { $in: ids }, isDeleted: false }).exec();
   }
 }

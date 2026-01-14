@@ -20,8 +20,6 @@ export type CleaningServiceResponse = {
   _id: string;
   name: string;
   code: string;
-  category: string;
-  description?: string;
   price: number;
   isActive: boolean;
   createdAt: Date;

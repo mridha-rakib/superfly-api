@@ -5,7 +5,7 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),
-  APP_NAME: z.string().default("BeforeListed - service provider Platform"),
+  APP_NAME: z.string().default("SuperFly - service provider Platform"),
   BASE_URL: z.string().default("/api/v1"),
   PORT: z.coerce.number().default(3000),
   MONGO_URI: z.url().nonempty("MONGO_URI is required"),
@@ -42,6 +42,11 @@ const envSchema = z.object({
 
   STRIPE_SECRET_KEY: z.string().min(1, "STRIPE_SECRET_KEY is required"),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+
+  AWS_ACCESS_KEY: z.string().min(1, "AWS access key is required."),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS secret key is required."),
+  AWS_REGION: z.string().min(1, "AWS region is required."),
+  AWS_S3_BUCKET: z.string().min(1, "S3 bucket name is required."),
 });
 
 try {

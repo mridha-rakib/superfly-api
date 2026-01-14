@@ -62,6 +62,16 @@ export const QUOTE = {
     REVIEWED: "reviewed",
     CONTACTED: "contacted",
     PAID: "paid",
+    COMPLETED: "completed",
+  },
+  CLEANING_STATUSES: {
+    PENDING: "pending",
+    IN_PROGRESS: "cleaning_in_progress",
+    COMPLETED: "completed",
+  },
+  REPORT_STATUSES: {
+    PENDING: "pending",
+    APPROVED: "approved",
   },
 } as const;
 

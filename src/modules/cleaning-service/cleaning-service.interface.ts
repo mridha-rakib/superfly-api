@@ -5,8 +5,6 @@ export interface ICleaningService extends Document {
   name: string;
   nameLower: string;
   code: string;
-  category: string;
-  description?: string;
   price: number;
   isActive: boolean;
   createdAt: Date;

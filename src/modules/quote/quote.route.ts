@@ -58,4 +58,23 @@ router.get(
   quoteController.listCleanerAssignedQuotes
 );
 
+router.patch(
+  "/:quoteId/arrived",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.CLIENT),
+  quoteController.markArrived
+);
+
+router.get(
+  "/:quoteId",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(
+    ROLES.ADMIN,
+    ROLES.SUPER_ADMIN,
+    ROLES.CLEANER,
+    ROLES.CLIENT
+  ),
+  quoteController.getQuoteById
+);
+
 export default router;
