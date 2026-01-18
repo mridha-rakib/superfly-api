@@ -85,7 +85,6 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
   },
   paymentIntentId: {
     type: String,
-    index: true,
   },
   paymentAmount: {
     type: Number,
@@ -118,6 +117,15 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     type: String,
     enum: Object.values(QUOTE.REPORT_STATUSES),
     index: true,
+  },
+  cleanerPercentage: {
+    type: Number,
+    min: 0,
+    max: 100,
+  },
+  cleanerEarningAmount: {
+    type: Number,
+    min: 0,
   },
 });
 

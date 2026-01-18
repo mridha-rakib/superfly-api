@@ -9,6 +9,7 @@ import morgan from "morgan";
 
 import { errorHandler } from "@/middlewares/error-handler.middleware";
 import { notFound } from "@/middlewares/not-found.middleware";
+import billingWebhookRouter from "@/modules/billing/billing-webhook.route.js";
 import rootRouter from "@/routes/index.route.js";
 
 import swaggerUi from "swagger-ui-express";
@@ -24,6 +25,12 @@ app.use(
     origin: true,
     credentials: true,
   })
+);
+
+app.use(
+  `${env.BASE_URL}/billing/webhook`,
+  express.raw({ type: "application/json" }),
+  billingWebhookRouter
 );
 
 app.use(express.json());

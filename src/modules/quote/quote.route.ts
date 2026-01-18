@@ -58,6 +58,13 @@ router.get(
   quoteController.listCleanerAssignedQuotes
 );
 
+router.get(
+  "/cleaner/earnings",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.CLEANER),
+  quoteController.getCleanerEarnings
+);
+
 router.patch(
   "/:quoteId/arrived",
   authMiddleware.verifyToken,

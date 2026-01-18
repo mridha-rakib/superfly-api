@@ -41,7 +41,9 @@ const envSchema = z.object({
   SMTP_FROM: z.string().optional(),
 
   STRIPE_SECRET_KEY: z.string().min(1, "STRIPE_SECRET_KEY is required"),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1, "STRIPE_WEBHOOK_SECRET is required"),
+  STRIPE_CHECKOUT_SUCCESS_URL: z.string().min(1).optional(),
+  STRIPE_CHECKOUT_CANCEL_URL: z.string().min(1).optional(),
 
   AWS_ACCESS_KEY: z.string().min(1, "AWS access key is required."),
   AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS secret key is required."),
@@ -56,7 +58,7 @@ try {
   if (error instanceof z.ZodError) {
     console.error(
       "Missing environment variables:",
-      error.issues.flatMap((issue) => issue.path)
+      error.issues.flatMap((issue) => issue.path),
     );
   } else {
     console.error(error);

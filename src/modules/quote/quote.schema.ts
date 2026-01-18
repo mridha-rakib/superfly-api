@@ -12,6 +12,7 @@ const baseQuoteSchema = z.object({
   serviceDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Service date must be YYYY-MM-DD"),
+  paymentFlow: z.enum(["checkout", "intent"]).optional(),
 });
 
 const baseServiceRequestSchema = z.object({
@@ -82,9 +83,19 @@ export const assignQuoteCleanerSchema = z.object({
 });
 
 export const confirmQuotePaymentSchema = z.object({
-  body: z.object({
-    paymentIntentId: z.string().min(1),
-  }),
+  body: z
+    .object({
+      paymentIntentId: z.string().min(1).optional(),
+      checkoutSessionId: z.string().min(1).optional(),
+      paymentMethodId: z.string().min(1).optional(),
+    })
+    .refine(
+      (data) => Boolean(data.paymentIntentId || data.checkoutSessionId),
+      {
+        message: "paymentIntentId or checkoutSessionId is required",
+        path: ["paymentIntentId"],
+      }
+    ),
 });
 
 export const quoteDetailSchema = z.object({

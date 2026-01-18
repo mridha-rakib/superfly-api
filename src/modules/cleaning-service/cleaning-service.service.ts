@@ -29,6 +29,7 @@ export class CleaningServiceService {
     payload: CleaningServiceCreatePayload
   ): Promise<CleaningServiceResponse> {
     const nameLower = payload.name.trim().toLowerCase();
+    const code = await this.generateUniqueCode(payload.name);
 
     const existing = await this.repository.findByNameAndCategory(nameLower);
 
@@ -41,6 +42,7 @@ export class CleaningServiceService {
     const service = await this.repository.create({
       name: payload.name.trim(),
       nameLower,
+      code,
       price: payload.price,
       isActive: true,
     });

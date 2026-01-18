@@ -37,13 +37,13 @@ export class QuoteController {
       req.user?.userId
     );
 
-    ApiResponse.success(res, intent, "Payment intent created successfully");
+    ApiResponse.success(res, intent, "Payment session created successfully");
   });
 
   confirmPayment = asyncHandler(async (req: Request, res: Response) => {
     const validated = await zParse(confirmQuotePaymentSchema, req);
     const quote = await this.quoteService.confirmPayment(
-      validated.body.paymentIntentId,
+      validated.body,
       req.user?.userId
     );
 
@@ -180,6 +180,16 @@ export class QuoteController {
       ApiResponse.success(res, data, "Assigned quotes fetched successfully");
     }
   );
+
+  getCleanerEarnings = asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
+
+    const result = await this.quoteService.getCleanerEarnings(userId);
+    ApiResponse.success(res, result, "Cleaner earnings fetched successfully");
+  });
 
   getQuoteById = asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) {

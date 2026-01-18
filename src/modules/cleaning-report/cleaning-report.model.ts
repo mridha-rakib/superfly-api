@@ -8,7 +8,6 @@ const cleaningReportSchema = BaseSchemaUtil.createSchema<ICleaningReport>({
     type: Schema.Types.ObjectId,
     ref: "Quote",
     required: true,
-    index: true,
   },
   cleanerId: {
     type: Schema.Types.ObjectId,

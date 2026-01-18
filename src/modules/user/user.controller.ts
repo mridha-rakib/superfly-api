@@ -4,7 +4,9 @@ import { MESSAGES } from "@/constants/app.constants";
 import { asyncHandler } from "@/middlewares/async-handler.middleware";
 import { UnauthorizedException } from "@/utils/app-error.utils";
 import { ApiResponse } from "@/utils/response.utils";
+import { zParse } from "@/utils/validators.utils";
 import type { Request, Response } from "express";
+import { createCleanerSchema } from "./user.schema";
 import { UserService } from "./user.service";
 
 export class UserController {
@@ -21,5 +23,11 @@ export class UserController {
     }
     const profile = await this.userService.getProfile(userId);
     ApiResponse.success(res, profile, "Profile fetched successfully");
+  });
+
+  createCleaner = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(createCleanerSchema, req);
+    const cleaner = await this.userService.createCleaner(validated.body);
+    ApiResponse.created(res, cleaner, "Cleaner created successfully");
   });
 }

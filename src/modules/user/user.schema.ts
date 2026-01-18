@@ -1,11 +1,11 @@
-// file: src/modules/user/user.schema.ts
-
 import { z } from "zod";
 
-export const updateUserSchema = z.object({
+export const createCleanerSchema = z.object({
   body: z.object({
-    fullName: z.string().min(2).max(100).optional(),
-    phoneNumber: z.string().optional(),
-    address: z.string().min(2).max(250).optional(),
+    fullName: z.string().trim().min(1).max(200),
+    email: z.string().email(),
+    cleanerPercentage: z.coerce.number().min(0).max(100),
+    phoneNumber: z.string().trim().min(3).max(20).optional(),
+    address: z.string().trim().min(1).max(250).optional(),
   }),
 });

@@ -11,6 +11,7 @@ export type UserResponse = {
   role: (typeof ROLES)[keyof typeof ROLES];
   accountStatus: (typeof ACCOUNT_STATUS)[keyof typeof ACCOUNT_STATUS];
   emailVerified: boolean;
+  cleanerPercentage?: number;
   lastLoginAt?: Date;
   profileImage?: string;
 
@@ -28,6 +29,15 @@ export type UserCreatePayload = {
   role: (typeof ROLES)[keyof typeof ROLES];
   emailVerified?: boolean;
   accountStatus?: (typeof ACCOUNT_STATUS)[keyof typeof ACCOUNT_STATUS];
+  cleanerPercentage?: number;
+};
+
+export type CleanerCreatePayload = {
+  fullName: string;
+  email: string;
+  cleanerPercentage: number;
+  phoneNumber?: string;
+  address?: string;
 };
 
 export type UpdateUserPayload = {

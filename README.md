@@ -225,6 +225,25 @@ FIREBASE_CLIENT_EMAIL=firebase-adminsdk@scbhs-85801.iam.gserviceaccount.com
 FRONTEND_URL=http://localhost:3000
 ```
 
+## Stripe Checkout (Billing)
+
+Configure Stripe to use Checkout sessions and webhooks. Payments are confirmed only by webhook events.
+
+```env
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_CHECKOUT_SUCCESS_URL=http://localhost:3000/checkout/success?session_id={CHECKOUT_SESSION_ID}
+STRIPE_CHECKOUT_CANCEL_URL=http://localhost:3000/checkout/cancel
+```
+
+Local webhook forwarding (Stripe CLI):
+
+```bash
+stripe listen --forward-to http://localhost:8080/api/v1/billing/webhook
+```
+
+Pricing is computed server-side from active cleaning services and quantities. To switch to live mode, replace your Stripe keys and webhook secret with live values.
+
 ---
 
 ## 📖 API Documentation

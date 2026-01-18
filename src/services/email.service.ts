@@ -35,6 +35,14 @@ type PasswordChangePayload = {
   changedAt: Date;
 };
 
+type AccountCredentialsPayload = {
+  to: string;
+  userName: string;
+  userType: string;
+  password: string;
+  loginLink?: string;
+};
+
 export class EmailService {
   private provider: "postmark" | "smtp" | "disabled";
   private transporter?: Transporter;
@@ -185,6 +193,29 @@ export class EmailService {
       <p>Hi ${this.safeText(payload.userName)},</p>
       <p>Your password was changed on ${payload.changedAt.toISOString()}.</p>
       <p>If you did not perform this action, please contact support immediately.</p>
+    `);
+
+    await this.send({
+      to: payload.to,
+      subject,
+      html,
+      text: this.stripHtml(html),
+    });
+  }
+
+  async sendAccountCredentials(
+    payload: AccountCredentialsPayload
+  ): Promise<void> {
+    const loginLink = payload.loginLink || `${env.CLIENT_URL}/login`;
+    const subject = `${APP.NAME} account credentials`;
+    const html = this.wrapTemplate(`
+      <p>Hi ${this.safeText(payload.userName)},</p>
+      <p>Your ${this.safeText(payload.userType)} account has been created.</p>
+      <p>Temporary password: <strong>${this.safeText(
+        payload.password
+      )}</strong></p>
+      <p>Please log in and change your password right away:</p>
+      <p><a href="${loginLink}">${loginLink}</a></p>
     `);
 
     await this.send({

@@ -42,6 +42,11 @@ const userSchema = BaseSchemaUtil.createSchema<IUser>({
         sparse: true,
         index: true,
       },
+      cleanerPercentage: {
+        type: Number,
+        min: 0,
+        max: 100,
+      },
 
       emailVerified: {
         type: Boolean,

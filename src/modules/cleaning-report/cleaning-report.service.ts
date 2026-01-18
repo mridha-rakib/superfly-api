@@ -11,6 +11,7 @@ import type { PaginateOptions } from "mongoose";
 import type { IQuote } from "../quote/quote.interface";
 import { QuoteRepository } from "../quote/quote.repository";
 import { QuoteService } from "../quote/quote.service";
+import { UserService } from "../user/user.service";
 import type { IUser } from "../user/user.interface";
 import type { ICleaningReport } from "./cleaning-report.interface";
 import { CleaningReportRepository } from "./cleaning-report.repository";
@@ -35,12 +36,14 @@ export class CleaningReportService {
   private quoteRepository: QuoteRepository;
   private quoteService: QuoteService;
   private storageService: S3Service;
+  private userService: UserService;
 
   constructor() {
     this.reportRepository = new CleaningReportRepository();
     this.quoteRepository = new QuoteRepository();
     this.quoteService = new QuoteService();
     this.storageService = new S3Service();
+    this.userService = new UserService();
   }
 
   async createReport(
@@ -191,12 +194,21 @@ export class CleaningReportService {
       );
     }
 
+    const cleanerPercentage = await this.resolveCleanerPercentage(quote);
+    const totalAmount = this.resolveQuoteTotal(quote);
+    const cleanerEarningAmount =
+      totalAmount > 0
+        ? Number(((totalAmount * cleanerPercentage) / 100).toFixed(2))
+        : 0;
+
     await this.quoteRepository.updateById(quote._id.toString(), {
       reportStatus: QUOTE.REPORT_STATUSES.APPROVED,
       cleaningStatus: QUOTE.CLEANING_STATUSES.COMPLETED,
       status: QUOTE.STATUSES.COMPLETED,
       paymentStatus: quote.paymentStatus || "paid",
       paidAt: quote.paidAt || new Date(),
+      cleanerPercentage,
+      cleanerEarningAmount,
     });
 
     const reportWithDetails = await this.reportRepository.findByIdWithDetails(
@@ -306,5 +318,34 @@ export class CleaningReportService {
       return (value as any)._id.toString();
     }
     return String(value);
+  }
+
+  private async resolveCleanerPercentage(quote: IQuote): Promise<number> {
+    if (
+      quote.cleanerPercentage !== undefined &&
+      quote.cleanerPercentage !== null
+    ) {
+      return quote.cleanerPercentage;
+    }
+
+    if (!quote.assignedCleanerId) {
+      return 0;
+    }
+
+    const cleaner = await this.userService.getById(
+      quote.assignedCleanerId.toString()
+    );
+
+    return cleaner?.cleanerPercentage ?? 0;
+  }
+
+  private resolveQuoteTotal(quote: IQuote): number {
+    if (quote.totalPrice && quote.totalPrice > 0) {
+      return quote.totalPrice;
+    }
+    if (quote.paymentAmount && quote.paymentAmount > 0) {
+      return Number((quote.paymentAmount / 100).toFixed(2));
+    }
+    return 0;
   }
 }

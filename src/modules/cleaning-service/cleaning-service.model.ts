@@ -20,16 +20,6 @@ const cleaningServiceSchema = BaseSchemaUtil.createSchema<ICleaningService>({
     unique: true,
     index: true,
   },
-  category: {
-    type: String,
-    required: true,
-    default: "general",
-    index: true,
-  },
-  description: {
-    type: String,
-    trim: true,
-  },
   price: {
     type: Number,
     required: true,
@@ -46,5 +36,5 @@ cleaningServiceSchema.index({ nameLower: 1, category: 1 }, { unique: true });
 
 export const CleaningService = model<ICleaningService>(
   "CleaningService",
-  cleaningServiceSchema
+  cleaningServiceSchema,
 );

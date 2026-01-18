@@ -9,6 +9,8 @@ import {
 } from "@/utils/app-error.utils";
 import type { PaginateResult } from "@/ts/pagination.types";
 import type { PaginateOptions } from "mongoose";
+import type Stripe from "stripe";
+import { stripeCheckoutUrls } from "../billing/billing.config";
 import { CleaningServiceService } from "../cleaning-service/cleaning-service.service";
 import { UserService } from "../user/user.service";
 import type { IQuote } from "./quote.interface";
@@ -84,25 +86,84 @@ export class QuoteService {
     const pricing = this.pricingService.calculate(pricingInput, activeServices);
     const amount = this.toMinorAmount(pricing.total);
     const serviceDate = payload.serviceDate.trim();
+    const paymentFlow = payload.paymentFlow || "checkout";
 
     if (amount <= 0) {
       throw new BadRequestException("Total amount must be greater than zero");
     }
 
-    const paymentIntent = await stripeService.createPaymentIntent({
-      amount,
-      currency: pricing.currency.toLowerCase(),
-      receipt_email: contact.email,
-      automatic_payment_methods: { enabled: true },
+    if (paymentFlow === "intent") {
+      const paymentIntent = await stripeService.createPaymentIntent({
+        amount,
+        currency: pricing.currency.toLowerCase(),
+        receipt_email: contact.email,
+        automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+        metadata: {
+          userId: userId || "",
+          serviceDate,
+        },
+      });
+
+      if (!paymentIntent.client_secret) {
+        throw new BadRequestException("Payment intent could not be initialized");
+      }
+
+      await this.paymentDraftRepository.create({
+        userId,
+        firstName: contact.firstName!,
+        lastName: contact.lastName!,
+        email: contact.email!,
+        phoneNumber: contact.phoneNumber!,
+        serviceDate,
+        notes: payload.notes?.trim(),
+        services: pricing.items,
+        totalPrice: pricing.total,
+        currency: pricing.currency,
+        paymentIntentId: paymentIntent.id,
+        paymentAmount: amount,
+        paymentStatus: "pending",
+      });
+
+      return {
+        flow: "intent",
+        paymentIntentId: paymentIntent.id,
+        clientSecret: paymentIntent.client_secret,
+        amount,
+        currency: pricing.currency,
+      };
+    }
+
+    const items = pricing.items.filter((item) => item.quantity > 0);
+    if (items.length === 0) {
+      throw new BadRequestException("No billable services selected");
+    }
+
+    const session = await stripeService.createCheckoutSession({
+      mode: "payment",
+      success_url: stripeCheckoutUrls.successUrl,
+      cancel_url: stripeCheckoutUrls.cancelUrl,
+      line_items: items.map((item) => ({
+        price_data: {
+          currency: pricing.currency.toLowerCase(),
+          unit_amount: this.toMinorAmount(item.unitPrice),
+          product_data: {
+            name: item.label,
+          },
+        },
+        quantity: item.quantity,
+      })),
+      customer_email: contact.email,
       metadata: {
         userId: userId || "",
         serviceDate,
       },
     });
 
-    if (!paymentIntent.client_secret) {
-      throw new BadRequestException("Payment intent could not be initialized");
+    if (!session.url) {
+      throw new BadRequestException("Checkout session URL is missing");
     }
+
+    const paymentIntentId = this.resolveStripeId(session.payment_intent);
 
     await this.paymentDraftRepository.create({
       userId,
@@ -115,23 +176,45 @@ export class QuoteService {
       services: pricing.items,
       totalPrice: pricing.total,
       currency: pricing.currency,
-      paymentIntentId: paymentIntent.id,
+      paymentIntentId,
+      stripeSessionId: session.id,
       paymentAmount: amount,
       paymentStatus: "pending",
     });
 
     return {
-      paymentIntentId: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret,
+      flow: "checkout",
+      paymentIntentId,
+      sessionId: session.id,
+      checkoutUrl: session.url,
       amount,
       currency: pricing.currency,
     };
   }
 
   async confirmPayment(
-    paymentIntentId: string,
+    payload: {
+      paymentIntentId?: string;
+      checkoutSessionId?: string;
+      paymentMethodId?: string;
+    },
     requestUserId?: string
   ): Promise<QuoteResponse> {
+    if (payload.checkoutSessionId) {
+      return this.confirmCheckoutSessionPayment(
+        payload.checkoutSessionId,
+        requestUserId
+      );
+    }
+
+    if (!payload.paymentIntentId) {
+      throw new BadRequestException(
+        "Payment intent or checkout session is required"
+      );
+    }
+
+    const paymentIntentId = payload.paymentIntentId;
+    const paymentMethodId = payload.paymentMethodId;
     const draft = await this.paymentDraftRepository.findByPaymentIntentId(
       paymentIntentId
     );
@@ -157,9 +240,20 @@ export class QuoteService {
       }
     }
 
-    const paymentIntent = await stripeService.retrievePaymentIntent(
+    let paymentIntent = await stripeService.retrievePaymentIntent(
       paymentIntentId
     );
+
+    if (paymentIntent.status !== "succeeded" && paymentMethodId) {
+      paymentIntent = await stripeService.confirmPaymentIntent(
+        paymentIntentId,
+        paymentMethodId
+      );
+    }
+
+    if (paymentIntent.status === "requires_action") {
+      throw new BadRequestException("Payment requires additional action");
+    }
 
     if (paymentIntent.status !== "succeeded") {
       throw new BadRequestException("Payment has not succeeded");
@@ -194,6 +288,109 @@ export class QuoteService {
 
     draft.paymentStatus = "completed";
     draft.quoteId = quote._id.toString();
+    await draft.save();
+
+    return this.toResponse(quote);
+  }
+
+  private async confirmCheckoutSessionPayment(
+    checkoutSessionId: string,
+    requestUserId?: string
+  ): Promise<QuoteResponse> {
+    const draft = await this.paymentDraftRepository.findByStripeSessionId(
+      checkoutSessionId
+    );
+
+    if (!draft) {
+      throw new NotFoundException("Payment draft not found");
+    }
+
+    if (
+      draft.userId &&
+      requestUserId &&
+      draft.userId.toString() !== requestUserId
+    ) {
+      throw new UnauthorizedException("Unauthorized payment confirmation");
+    }
+
+    if (draft.paymentStatus === "completed" && draft.quoteId) {
+      const existingQuote = await this.quoteRepository.findById(
+        draft.quoteId.toString()
+      );
+      if (existingQuote) {
+        return this.toResponse(existingQuote);
+      }
+    }
+
+    const session = await stripeService.retrieveCheckoutSession(
+      checkoutSessionId,
+      { expand: ["payment_intent"] }
+    );
+
+    if (
+      session.payment_status !== "paid" &&
+      session.payment_status !== "no_payment_required"
+    ) {
+      throw new BadRequestException("Payment has not succeeded");
+    }
+
+    const paymentIntent =
+      session.payment_intent &&
+      typeof session.payment_intent === "object" &&
+      "amount_received" in session.payment_intent
+        ? (session.payment_intent as Stripe.PaymentIntent)
+        : undefined;
+
+    if (paymentIntent && paymentIntent.status !== "succeeded") {
+      throw new BadRequestException("Payment has not succeeded");
+    }
+
+    const amountReceived =
+      paymentIntent?.amount_received ?? session.amount_total ?? undefined;
+    const currency =
+      paymentIntent?.currency ?? session.currency ?? undefined;
+
+    if (
+      amountReceived !== undefined &&
+      amountReceived !== draft.paymentAmount
+    ) {
+      throw new BadRequestException("Payment details do not match draft");
+    }
+
+    if (currency && currency.toLowerCase() !== draft.currency.toLowerCase()) {
+      throw new BadRequestException("Payment details do not match draft");
+    }
+
+    const paymentIntentId =
+      paymentIntent?.id || this.resolveStripeId(session.payment_intent);
+
+    const quote = await this.quoteRepository.create({
+      userId: draft.userId,
+      serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
+      status: QUOTE.STATUSES.PAID,
+      contactName: this.formatContactName(draft.firstName, draft.lastName),
+      firstName: draft.firstName,
+      lastName: draft.lastName,
+      email: draft.email.toLowerCase(),
+      phoneNumber: draft.phoneNumber,
+      serviceDate: draft.serviceDate,
+      notes: draft.notes,
+      services: draft.services,
+      totalPrice: draft.totalPrice,
+      currency: draft.currency,
+      paymentIntentId: paymentIntentId || draft.paymentIntentId,
+      paymentAmount: draft.paymentAmount,
+      paymentStatus: "paid",
+      paidAt: paymentIntent
+        ? new Date(paymentIntent.created * 1000)
+        : new Date(),
+    });
+
+    draft.paymentStatus = "completed";
+    draft.quoteId = quote._id.toString();
+    if (paymentIntentId) {
+      draft.paymentIntentId = paymentIntentId;
+    }
     await draft.save();
 
     return this.toResponse(quote);
@@ -313,10 +510,17 @@ export class QuoteService {
     if (cleaner.role !== ROLES.CLEANER) {
       throw new BadRequestException("Assigned user is not a cleaner");
     }
+    if (
+      cleaner.cleanerPercentage === undefined ||
+      cleaner.cleanerPercentage === null
+    ) {
+      throw new BadRequestException("Cleaner percentage is not configured");
+    }
 
     const updated = await this.quoteRepository.updateById(quoteId, {
       assignedCleanerId: cleaner._id,
       assignedCleanerAt: new Date(),
+      cleanerPercentage: cleaner.cleanerPercentage,
     });
 
     if (!updated) {
@@ -342,6 +546,18 @@ export class QuoteService {
       sort: { createdAt: -1 },
       ...options,
     });
+  }
+
+  async getCleanerEarnings(
+    cleanerId: string
+  ): Promise<{ totalEarnings: number; totalJobs: number; currency: string }> {
+    const result = await this.quoteRepository.sumCleanerEarnings(cleanerId);
+
+    return {
+      totalEarnings: Number(result.total || 0),
+      totalJobs: result.count || 0,
+      currency: QUOTE.CURRENCY,
+    };
   }
 
   async getByIdForAccess(
@@ -622,9 +838,20 @@ export class QuoteService {
   ): QuoteCreatePayload["services"] {
     const normalized: QuoteCreatePayload["services"] = {};
     Object.entries(selections || {}).forEach(([key, value]) => {
-      normalized[key.trim().toLowerCase()] = value ?? 0;
+      const normalizedKey = this.normalizeServiceKey(key);
+      normalized[normalizedKey] = value ?? 0;
     });
     return normalized;
+  }
+
+  private normalizeServiceKey(key: string): string {
+    const normalized = key
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+
+    return normalized || key.trim().toLowerCase();
   }
 
   private ensureAllServicesFound(
@@ -657,6 +884,14 @@ export class QuoteService {
       serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
         ? quote.reportStatus
         : undefined;
+    const cleanerPercentage =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? quote.cleanerPercentage
+        : undefined;
+    const cleanerEarningAmount =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? quote.cleanerEarningAmount
+        : undefined;
 
     return {
       _id: quote._id.toString(),
@@ -687,6 +922,8 @@ export class QuoteService {
       assignedCleanerAt: quote.assignedCleanerAt,
       cleaningStatus,
       reportStatus,
+      cleanerPercentage,
+      cleanerEarningAmount,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };
@@ -694,5 +931,20 @@ export class QuoteService {
 
   private toMinorAmount(amount: number): number {
     return Math.round(amount * 100);
+  }
+
+  private resolveStripeId(
+    value?: string | { id: string } | null
+  ): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "object" && "id" in value) {
+      return value.id;
+    }
+    return undefined;
   }
 }

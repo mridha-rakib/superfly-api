@@ -23,6 +23,7 @@ export type QuoteCreatePayload = {
   serviceDate: string;
   notes?: string;
   services: QuoteServiceSelection;
+  paymentFlow?: "checkout" | "intent";
 };
 
 export type QuoteRequestPayload = {
@@ -72,13 +73,18 @@ export type QuoteResponse = {
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
+  cleanerPercentage?: number;
+  cleanerEarningAmount?: number;
   createdAt: Date;
   updatedAt: Date;
 };
 
 export type QuotePaymentIntentResponse = {
-  paymentIntentId: string;
-  clientSecret: string;
+  flow: "checkout" | "intent";
+  paymentIntentId?: string;
+  clientSecret?: string;
+  checkoutUrl?: string;
+  sessionId?: string;
   amount: number;
   currency: string;
 };

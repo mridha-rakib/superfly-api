@@ -55,6 +55,8 @@ export interface IQuote extends Document {
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
+  cleanerPercentage?: number;
+  cleanerEarningAmount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,7 +73,8 @@ export interface IQuotePaymentDraft extends Document {
   services: IQuoteServiceItem[];
   totalPrice: number;
   currency: string;
-  paymentIntentId: string;
+  paymentIntentId?: string;
+  stripeSessionId?: string;
   paymentAmount: number;
   paymentStatus: "pending" | "completed";
   quoteId?: Types.ObjectId | string;
