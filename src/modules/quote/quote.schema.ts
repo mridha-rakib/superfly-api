@@ -103,3 +103,18 @@ export const quoteDetailSchema = z.object({
     quoteId: z.string().min(1),
   }),
 });
+
+export const quotePaymentStatusSchema = z.object({
+  query: z
+    .object({
+      paymentIntentId: z.string().min(1).optional(),
+      checkoutSessionId: z.string().min(1).optional(),
+    })
+    .refine(
+      (data) => Boolean(data.paymentIntentId || data.checkoutSessionId),
+      {
+        message: "paymentIntentId or checkoutSessionId is required",
+        path: ["paymentIntentId"],
+      }
+    ),
+});

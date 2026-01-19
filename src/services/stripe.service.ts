@@ -31,6 +31,16 @@ export class StripeService {
     return this.stripe.checkout.sessions.retrieve(sessionId, params);
   }
 
+  async listCheckoutSessionsByPaymentIntent(
+    paymentIntentId: string,
+    limit: number = 1,
+  ) {
+    return this.stripe.checkout.sessions.list({
+      payment_intent: paymentIntentId,
+      limit,
+    });
+  }
+
   async confirmPaymentIntent(
     paymentIntentId: string,
     paymentMethodId?: string,

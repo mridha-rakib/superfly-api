@@ -1,27 +1,28 @@
 import { QUOTE, ROLES } from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
 import { stripeService } from "@/services/stripe.service";
+import type { PaginateResult } from "@/ts/pagination.types";
 import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
 } from "@/utils/app-error.utils";
-import type { PaginateResult } from "@/ts/pagination.types";
 import type { PaginateOptions } from "mongoose";
 import type Stripe from "stripe";
 import { stripeCheckoutUrls } from "../billing/billing.config";
 import { CleaningServiceService } from "../cleaning-service/cleaning-service.service";
 import { UserService } from "../user/user.service";
-import type { IQuote } from "./quote.interface";
 import { QuoteNotificationRepository } from "./quote-notification.repository";
-import { QuotePricingService } from "./quote.pricing";
 import { QuotePaymentDraftRepository } from "./quote-payment.repository";
+import type { IQuote } from "./quote.interface";
+import { QuotePricingService } from "./quote.pricing";
 import { QuoteRepository } from "./quote.repository";
 import type {
+  QuoteAssignCleanerPayload,
   QuoteCreatePayload,
   QuotePaymentIntentResponse,
-  QuoteAssignCleanerPayload,
+  QuotePaymentStatusResponse,
   QuoteRequestPayload,
   QuoteResponse,
   QuoteStatusUpdatePayload,
@@ -59,24 +60,24 @@ export class QuoteService {
 
   async createPaymentIntent(
     payload: QuoteCreatePayload,
-    requestUserId?: string
+    requestUserId?: string,
   ): Promise<QuotePaymentIntentResponse> {
     const { contact, userId } = await this.resolveContact(
       payload,
-      requestUserId
+      requestUserId,
     );
     const pricingInput = this.normalizeServiceSelections(payload.services);
     const requestedCodes = Object.keys(pricingInput);
     const activeServices = requestedCodes.length
       ? await this.cleaningServiceService.getActiveServicesByCodes(
-          requestedCodes
+          requestedCodes,
         )
       : [];
 
     if (requestedCodes.length > 0) {
       if (activeServices.length === 0) {
         throw new BadRequestException(
-          "No active services configured for requested codes"
+          "No active services configured for requested codes",
         );
       }
 
@@ -87,6 +88,13 @@ export class QuoteService {
     const amount = this.toMinorAmount(pricing.total);
     const serviceDate = payload.serviceDate.trim();
     const paymentFlow = payload.paymentFlow || "checkout";
+    const normalizedCurrency = pricing.currency.toUpperCase();
+
+    if (normalizedCurrency !== "USD") {
+      throw new BadRequestException(
+        "Only USD is supported for Stripe payments",
+      );
+    }
 
     if (amount <= 0) {
       throw new BadRequestException("Total amount must be greater than zero");
@@ -97,7 +105,7 @@ export class QuoteService {
         amount,
         currency: pricing.currency.toLowerCase(),
         receipt_email: contact.email,
-        automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+        payment_method_types: ["card"],
         metadata: {
           userId: userId || "",
           serviceDate,
@@ -105,7 +113,9 @@ export class QuoteService {
       });
 
       if (!paymentIntent.client_secret) {
-        throw new BadRequestException("Payment intent could not be initialized");
+        throw new BadRequestException(
+          "Payment intent could not be initialized",
+        );
       }
 
       await this.paymentDraftRepository.create({
@@ -142,6 +152,7 @@ export class QuoteService {
       mode: "payment",
       success_url: stripeCheckoutUrls.successUrl,
       cancel_url: stripeCheckoutUrls.cancelUrl,
+      payment_method_types: ["card"],
       line_items: items.map((item) => ({
         price_data: {
           currency: pricing.currency.toLowerCase(),
@@ -198,26 +209,25 @@ export class QuoteService {
       checkoutSessionId?: string;
       paymentMethodId?: string;
     },
-    requestUserId?: string
+    requestUserId?: string,
   ): Promise<QuoteResponse> {
     if (payload.checkoutSessionId) {
       return this.confirmCheckoutSessionPayment(
         payload.checkoutSessionId,
-        requestUserId
+        requestUserId,
       );
     }
 
     if (!payload.paymentIntentId) {
       throw new BadRequestException(
-        "Payment intent or checkout session is required"
+        "Payment intent or checkout session is required",
       );
     }
 
     const paymentIntentId = payload.paymentIntentId;
     const paymentMethodId = payload.paymentMethodId;
-    const draft = await this.paymentDraftRepository.findByPaymentIntentId(
-      paymentIntentId
-    );
+    const draft =
+      await this.paymentDraftRepository.findByPaymentIntentId(paymentIntentId);
 
     if (!draft) {
       throw new NotFoundException("Payment draft not found");
@@ -233,21 +243,20 @@ export class QuoteService {
 
     if (draft.paymentStatus === "completed" && draft.quoteId) {
       const existingQuote = await this.quoteRepository.findById(
-        draft.quoteId.toString()
+        draft.quoteId.toString(),
       );
       if (existingQuote) {
         return this.toResponse(existingQuote);
       }
     }
 
-    let paymentIntent = await stripeService.retrievePaymentIntent(
-      paymentIntentId
-    );
+    let paymentIntent =
+      await stripeService.retrievePaymentIntent(paymentIntentId);
 
     if (paymentIntent.status !== "succeeded" && paymentMethodId) {
       paymentIntent = await stripeService.confirmPaymentIntent(
         paymentIntentId,
-        paymentMethodId
+        paymentMethodId,
       );
     }
 
@@ -293,13 +302,40 @@ export class QuoteService {
     return this.toResponse(quote);
   }
 
+  async getPaymentStatus(
+    payload: {
+      paymentIntentId?: string;
+      checkoutSessionId?: string;
+    },
+    requestUserId?: string,
+  ): Promise<QuotePaymentStatusResponse> {
+    if (payload.checkoutSessionId) {
+      return this.getCheckoutSessionStatus(
+        payload.checkoutSessionId,
+        requestUserId,
+      );
+    }
+
+    if (payload.paymentIntentId) {
+      return this.getPaymentIntentStatus(
+        payload.paymentIntentId,
+        requestUserId,
+      );
+    }
+
+    throw new BadRequestException(
+      "Payment intent or checkout session is required",
+    );
+  }
+
   private async confirmCheckoutSessionPayment(
     checkoutSessionId: string,
-    requestUserId?: string
+    requestUserId?: string,
   ): Promise<QuoteResponse> {
-    const draft = await this.paymentDraftRepository.findByStripeSessionId(
-      checkoutSessionId
-    );
+    const draft =
+      await this.paymentDraftRepository.findByStripeSessionId(
+        checkoutSessionId,
+      );
 
     if (!draft) {
       throw new NotFoundException("Payment draft not found");
@@ -315,7 +351,7 @@ export class QuoteService {
 
     if (draft.paymentStatus === "completed" && draft.quoteId) {
       const existingQuote = await this.quoteRepository.findById(
-        draft.quoteId.toString()
+        draft.quoteId.toString(),
       );
       if (existingQuote) {
         return this.toResponse(existingQuote);
@@ -324,7 +360,7 @@ export class QuoteService {
 
     const session = await stripeService.retrieveCheckoutSession(
       checkoutSessionId,
-      { expand: ["payment_intent"] }
+      { expand: ["payment_intent"] },
     );
 
     if (
@@ -347,8 +383,7 @@ export class QuoteService {
 
     const amountReceived =
       paymentIntent?.amount_received ?? session.amount_total ?? undefined;
-    const currency =
-      paymentIntent?.currency ?? session.currency ?? undefined;
+    const currency = paymentIntent?.currency ?? session.currency ?? undefined;
 
     if (
       amountReceived !== undefined &&
@@ -396,9 +431,95 @@ export class QuoteService {
     return this.toResponse(quote);
   }
 
+  private async getCheckoutSessionStatus(
+    checkoutSessionId: string,
+    requestUserId?: string,
+  ): Promise<QuotePaymentStatusResponse> {
+    const draft =
+      await this.paymentDraftRepository.findByStripeSessionId(
+        checkoutSessionId,
+      );
+
+    if (!draft) {
+      throw new NotFoundException("Payment draft not found");
+    }
+
+    if (
+      draft.userId &&
+      requestUserId &&
+      draft.userId.toString() !== requestUserId
+    ) {
+      throw new UnauthorizedException("Unauthorized payment lookup");
+    }
+
+    const session = await stripeService.retrieveCheckoutSession(
+      checkoutSessionId,
+      { expand: ["payment_intent"] },
+    );
+
+    const status = this.mapCheckoutSessionStatus(session);
+    const stripeStatus = session.payment_status || session.status || "unknown";
+    const paymentIntentId =
+      this.resolveStripeId(session.payment_intent) || draft.paymentIntentId;
+
+    if (status === "paid" && draft.paymentStatus !== "completed") {
+      draft.paymentStatus = "completed";
+      if (paymentIntentId) {
+        draft.paymentIntentId = paymentIntentId;
+      }
+      await draft.save();
+    }
+
+    return {
+      status,
+      checkoutSessionId,
+      paymentIntentId,
+      quoteId: draft.quoteId?.toString(),
+      stripeStatus,
+    };
+  }
+
+  private async getPaymentIntentStatus(
+    paymentIntentId: string,
+    requestUserId?: string,
+  ): Promise<QuotePaymentStatusResponse> {
+    const draft =
+      await this.paymentDraftRepository.findByPaymentIntentId(paymentIntentId);
+
+    if (!draft) {
+      throw new NotFoundException("Payment draft not found");
+    }
+
+    if (
+      draft.userId &&
+      requestUserId &&
+      draft.userId.toString() !== requestUserId
+    ) {
+      throw new UnauthorizedException("Unauthorized payment lookup");
+    }
+
+    const paymentIntent =
+      await stripeService.retrievePaymentIntent(paymentIntentId);
+
+    const status = this.mapPaymentIntentStatus(paymentIntent.status);
+
+    if (status === "paid" && draft.paymentStatus !== "completed") {
+      draft.paymentStatus = "completed";
+      await draft.save();
+    }
+
+    return {
+      status,
+      paymentIntentId,
+      checkoutSessionId: draft.stripeSessionId,
+      quoteId: draft.quoteId?.toString(),
+      stripeStatus: paymentIntent.status,
+    };
+  }
+
   async createServiceRequest(
     payload: QuoteRequestPayload,
-    requestUserId?: string
+    requestUserId?: string,
   ): Promise<QuoteResponse> {
     if (!this.isManualServiceType(payload.serviceType)) {
       throw new BadRequestException("Unsupported service type");
@@ -406,7 +527,7 @@ export class QuoteService {
 
     const { contact, userId } = await this.resolveRequestContact(
       payload,
-      requestUserId
+      requestUserId,
     );
 
     const companyName = payload.companyName.trim();
@@ -440,7 +561,7 @@ export class QuoteService {
     } catch (error) {
       logger.warn(
         { quoteId: quote._id.toString(), error },
-        "Admin notification failed"
+        "Admin notification failed",
       );
     }
 
@@ -449,7 +570,7 @@ export class QuoteService {
 
   async updateStatus(
     quoteId: string,
-    payload: QuoteStatusUpdatePayload
+    payload: QuoteStatusUpdatePayload,
   ): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
@@ -459,7 +580,7 @@ export class QuoteService {
 
     if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
       throw new BadRequestException(
-        "Status updates are only supported for manual quotes"
+        "Status updates are only supported for manual quotes",
       );
     }
 
@@ -487,7 +608,7 @@ export class QuoteService {
 
   async assignCleaner(
     quoteId: string,
-    payload: QuoteAssignCleanerPayload
+    payload: QuoteAssignCleanerPayload,
   ): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
@@ -495,11 +616,10 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
-    const serviceType =
-      quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
     if (serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
       throw new BadRequestException(
-        "Cleaner assignment is only supported for residential quotes"
+        "Cleaner assignment is only supported for residential quotes",
       );
     }
 
@@ -532,7 +652,7 @@ export class QuoteService {
 
   async getPaginated(
     filter: Record<string, any>,
-    options: PaginateOptions
+    options: PaginateOptions,
   ): Promise<PaginateResult<IQuote>> {
     const finalFilter = { ...filter, isDeleted: { $ne: true } };
     return this.quoteRepository.paginate(finalFilter, options);
@@ -540,7 +660,7 @@ export class QuoteService {
 
   async getAll(
     filter: Record<string, any> = {},
-    options: Record<string, any> = {}
+    options: Record<string, any> = {},
   ): Promise<IQuote[]> {
     return this.quoteRepository.findAll(filter, {
       sort: { createdAt: -1 },
@@ -549,7 +669,7 @@ export class QuoteService {
   }
 
   async getCleanerEarnings(
-    cleanerId: string
+    cleanerId: string,
   ): Promise<{ totalEarnings: number; totalJobs: number; currency: string }> {
     const result = await this.quoteRepository.sumCleanerEarnings(cleanerId);
 
@@ -562,7 +682,7 @@ export class QuoteService {
 
   async getByIdForAccess(
     quoteId: string,
-    requester: { userId: string; role: string }
+    requester: { userId: string; role: string },
   ): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
@@ -570,7 +690,10 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
-    if (requester.role === ROLES.ADMIN || requester.role === ROLES.SUPER_ADMIN) {
+    if (
+      requester.role === ROLES.ADMIN ||
+      requester.role === ROLES.SUPER_ADMIN
+    ) {
       return this.toResponse(quote);
     }
 
@@ -594,10 +717,7 @@ export class QuoteService {
     throw new ForbiddenException("User is not authorized to access this quote");
   }
 
-  async markArrived(
-    quoteId: string,
-    clientId: string
-  ): Promise<QuoteResponse> {
+  async markArrived(quoteId: string, clientId: string): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
     if (!quote) {
@@ -606,7 +726,7 @@ export class QuoteService {
 
     if (quote.serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
       throw new BadRequestException(
-        "Arrival updates are only supported for residential quotes"
+        "Arrival updates are only supported for residential quotes",
       );
     }
 
@@ -638,7 +758,7 @@ export class QuoteService {
 
   private async resolveContact(
     payload: QuoteCreatePayload,
-    requestUserId?: string
+    requestUserId?: string,
   ): Promise<{ contact: QuoteContact; userId?: string }> {
     const contact: QuoteContact = {
       firstName: payload.firstName?.trim(),
@@ -676,7 +796,7 @@ export class QuoteService {
 
   private async resolveRequestContact(
     payload: QuoteRequestPayload,
-    requestUserId?: string
+    requestUserId?: string,
   ): Promise<{ contact: QuoteRequestContact; userId?: string }> {
     const contact: QuoteRequestContact = {
       contactName: payload.name?.trim(),
@@ -709,9 +829,10 @@ export class QuoteService {
     return { contact, userId: resolvedUserId };
   }
 
-  private splitFullName(
-    fullName: string
-  ): { firstName: string; lastName: string } {
+  private splitFullName(fullName: string): {
+    firstName: string;
+    lastName: string;
+  } {
     const parts = fullName.trim().split(/\s+/);
     const firstName = parts.shift() || "";
     const lastName = parts.join(" ").trim();
@@ -774,7 +895,7 @@ export class QuoteService {
 
     const updated = await this.quoteRepository.updateById(
       quote._id.toString(),
-      update
+      update,
     );
 
     return updated || quote;
@@ -824,7 +945,7 @@ export class QuoteService {
 
   private formatContactName(
     firstName?: string,
-    lastName?: string
+    lastName?: string,
   ): string | undefined {
     const parts = [firstName, lastName].filter(Boolean);
     if (parts.length === 0) {
@@ -834,7 +955,7 @@ export class QuoteService {
   }
 
   private normalizeServiceSelections(
-    selections: QuoteCreatePayload["services"]
+    selections: QuoteCreatePayload["services"],
   ): QuoteCreatePayload["services"] {
     const normalized: QuoteCreatePayload["services"] = {};
     Object.entries(selections || {}).forEach(([key, value]) => {
@@ -856,23 +977,22 @@ export class QuoteService {
 
   private ensureAllServicesFound(
     selections: QuoteCreatePayload["services"],
-    services: { code: string }[]
+    services: { code: string }[],
   ): void {
     const availableCodes = new Set(services.map((service) => service.code));
     const unknown = Object.keys(selections).filter(
-      (code) => !availableCodes.has(code)
+      (code) => !availableCodes.has(code),
     );
 
     if (unknown.length > 0) {
       throw new BadRequestException(
-        `Unknown service codes: ${unknown.join(", ")}`
+        `Unknown service codes: ${unknown.join(", ")}`,
       );
     }
   }
 
   toResponse(quote: IQuote): QuoteResponse {
-    const serviceType =
-      quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
     const status =
       quote.status ||
       (quote.paymentStatus === "paid" ? QUOTE.STATUSES.PAID : undefined);
@@ -933,8 +1053,35 @@ export class QuoteService {
     return Math.round(amount * 100);
   }
 
+  private mapCheckoutSessionStatus(
+    session: Stripe.Checkout.Session,
+  ): QuotePaymentStatusResponse["status"] {
+    if (session.payment_status === "paid") {
+      return "paid";
+    }
+    if (session.payment_status === "no_payment_required") {
+      return "paid";
+    }
+    if (session.status === "expired") {
+      return "failed";
+    }
+    return "pending";
+  }
+
+  private mapPaymentIntentStatus(
+    status: Stripe.PaymentIntent.Status,
+  ): QuotePaymentStatusResponse["status"] {
+    if (status === "succeeded") {
+      return "paid";
+    }
+    if (status === "canceled") {
+      return "failed";
+    }
+    return "pending";
+  }
+
   private resolveStripeId(
-    value?: string | { id: string } | null
+    value?: string | { id: string } | null,
   ): string | undefined {
     if (!value) {
       return undefined;

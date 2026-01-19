@@ -6,6 +6,7 @@ import type {
 } from "./quote.interface";
 
 export type QuoteServiceSelection = Record<string, number | undefined>;
+export type QuotePaymentStatus = "pending" | "paid" | "failed";
 
 export type QuoteServiceItem = {
   key: string;
@@ -87,4 +88,12 @@ export type QuotePaymentIntentResponse = {
   sessionId?: string;
   amount: number;
   currency: string;
+};
+
+export type QuotePaymentStatusResponse = {
+  status: QuotePaymentStatus;
+  paymentIntentId?: string;
+  checkoutSessionId?: string;
+  quoteId?: string;
+  stripeStatus?: string;
 };

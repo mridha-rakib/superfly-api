@@ -14,6 +14,7 @@ import {
   createServiceRequestAuthSchema,
   createServiceRequestGuestSchema,
   quoteDetailSchema,
+  quotePaymentStatusSchema,
   updateQuoteStatusSchema,
 } from "./quote.schema";
 import { QuoteService } from "./quote.service";
@@ -48,6 +49,16 @@ export class QuoteController {
     );
 
     ApiResponse.created(res, quote, "Quote created successfully");
+  });
+
+  getPaymentStatus = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(quotePaymentStatusSchema, req);
+    const status = await this.quoteService.getPaymentStatus(
+      validated.query,
+      req.user?.userId
+    );
+
+    ApiResponse.success(res, status, "Payment status fetched successfully");
   });
 
   createCommercialRequest = asyncHandler(

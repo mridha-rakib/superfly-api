@@ -18,4 +18,22 @@ export class QuotePaymentDraftRepository extends BaseRepository<IQuotePaymentDra
   ): Promise<IQuotePaymentDraft | null> {
     return this.model.findOne({ stripeSessionId }).exec();
   }
+
+  async updateByStripeSessionId(
+    stripeSessionId: string,
+    update: Partial<IQuotePaymentDraft>,
+  ): Promise<IQuotePaymentDraft | null> {
+    return this.model
+      .findOneAndUpdate({ stripeSessionId }, update, { new: true })
+      .exec();
+  }
+
+  async updateByPaymentIntentId(
+    paymentIntentId: string,
+    update: Partial<IQuotePaymentDraft>,
+  ): Promise<IQuotePaymentDraft | null> {
+    return this.model
+      .findOneAndUpdate({ paymentIntentId }, update, { new: true })
+      .exec();
+  }
 }

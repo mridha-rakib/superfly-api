@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SuperFly Quote &amp; Payments Test</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-orbit"></div>
+    <main class="wrap">
+      <header class="hero">
+        <p class="eyebrow">SuperFly</p>
+        <h1>Quote &amp; Payments Testbench</h1>
+        <p class="subhead">
+          Create residential Stripe payments or submit manual quote requests,
+          then watch status updates from your hosted backend.
+        </p>
+      </header>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Backend</h2>
+          <p>Point this UI at your hosted API base.</p>
+        </div>
+        <form id="base-url-form" class="grid two">
+          <label class="field">
+            <span>API Base URL</span>
+            <input
+              id="base-url"
+              name="baseUrl"
+              type="url"
+              placeholder="https://your-host.trycloudflare.com/api/v1"
+              required
+            />
+          </label>
+          <button class="btn" type="submit">Save Base URL</button>
+        </form>
+        <div class="note">
+          <span>Active base:</span>
+          <strong id="base-url-active">Not set</strong>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Checkout</h2>
+          <p>Create a residential payment intent or Stripe Checkout session.</p>
+        </div>
+        <form id="quote-form" class="grid three">
+          <label class="field">
+            <span>First Name</span>
+            <input name="firstName" type="text" value="John" required />
+          </label>
+          <label class="field">
+            <span>Last Name</span>
+            <input name="lastName" type="text" value="Doe" required />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input name="email" type="email" value="john@example.com" required />
+          </label>
+          <label class="field">
+            <span>Phone</span>
+            <input name="phoneNumber" type="tel" value="1234567890" required />
+          </label>
+          <label class="field">
+            <span>Service Date</span>
+            <input name="serviceDate" type="date" required />
+          </label>
+          <label class="field">
+            <span>Payment Flow</span>
+            <select name="paymentFlow">
+              <option value="checkout" selected>Checkout (UI)</option>
+              <option value="intent">Payment Intent</option>
+            </select>
+          </label>
+          <div class="service-catalog span">
+            <div class="service-head">
+              <div>
+                <h3>Service Catalog</h3>
+                <p>Load active services from <code>/services</code>.</p>
+              </div>
+              <button id="load-services" class="btn ghost" type="button">
+                Load Services
+              </button>
+            </div>
+            <div id="service-list" class="service-list empty">
+              <p class="empty-state">No services loaded yet.</p>
+            </div>
+            <div class="note">
+              <span>Selections JSON</span>
+              <code id="services-preview">{}</code>
+            </div>
+          </div>
+          <label class="field span">
+            <span>Services JSON Override (optional)</span>
+            <textarea
+              id="services-override"
+              name="servicesOverride"
+              rows="3"
+              placeholder='{"standard-cleaning":1}'
+            ></textarea>
+          </label>
+          <label class="field span">
+            <span>Notes</span>
+            <input name="notes" type="text" placeholder="Optional notes" />
+          </label>
+          <button class="btn primary span" type="submit">
+            Create Payment Session
+          </button>
+        </form>
+
+        <div class="result">
+          <div>
+            <p class="label">Flow</p>
+            <p id="payment-flow">-</p>
+          </div>
+          <div>
+            <p class="label">Checkout URL</p>
+            <a id="checkout-url" href="#" target="_blank" rel="noreferrer"
+              >-</a
+            >
+          </div>
+          <div>
+            <p class="label">Session ID</p>
+            <p id="session-id">-</p>
+          </div>
+          <div>
+            <p class="label">Payment Intent</p>
+            <p id="payment-intent-id">-</p>
+          </div>
+          <div>
+            <p class="label">Client Secret</p>
+            <p id="client-secret">-</p>
+          </div>
+          <div>
+            <p class="label">Amount (cents)</p>
+            <p id="amount">-</p>
+          </div>
+          <div>
+            <p class="label">Currency</p>
+            <p id="currency">-</p>
+          </div>
+          <div>
+            <button id="open-checkout" class="btn ghost" type="button" disabled>
+              Open Checkout
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Status</h2>
+          <p>Poll payment state and confirm paid quotes.</p>
+        </div>
+        <form id="status-form" class="grid two">
+          <label class="field">
+            <span>Checkout Session ID</span>
+            <input id="status-session-id" name="checkoutSessionId" type="text" />
+          </label>
+          <label class="field">
+            <span>Payment Intent ID</span>
+            <input
+              id="status-payment-intent-id"
+              name="paymentIntentId"
+              type="text"
+            />
+          </label>
+          <label class="field inline">
+            <input id="auto-refresh" type="checkbox" />
+            <span>Auto refresh (3s)</span>
+          </label>
+          <button class="btn" type="submit">Check Status</button>
+        </form>
+
+        <div class="status-strip">
+          <span class="label">Status</span>
+          <span id="status-pill" class="pill pending">pending</span>
+          <span class="label">Stripe</span>
+          <span id="stripe-status">-</span>
+          <span class="label">Quote</span>
+          <span id="quote-id">-</span>
+        </div>
+
+        <div class="actions grid two">
+          <label class="field">
+            <span>Payment Method ID (intent only)</span>
+            <input
+              id="payment-method-id"
+              type="text"
+              placeholder="pm_..."
+            />
+          </label>
+          <button id="confirm-quote" class="btn primary" type="button">
+            Confirm Quote
+          </button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Manual Quote Requests</h2>
+          <p>Submit commercial or post-construction requests (no Stripe).</p>
+        </div>
+        <form id="manual-quote-form" class="grid three">
+          <label class="field">
+            <span>Service Type</span>
+            <select id="manual-service-type" name="serviceType">
+              <option value="commercial" selected>Commercial</option>
+              <option value="post_construction">Post-Construction</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Contact Name</span>
+            <input name="name" type="text" value="Alex Morgan" required />
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input
+              name="email"
+              type="email"
+              value="alex@example.com"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Phone</span>
+            <input name="phoneNumber" type="tel" value="5551234567" required />
+          </label>
+          <label class="field">
+            <span>Company Name</span>
+            <input name="companyName" type="text" value="Acme Corp" required />
+          </label>
+          <label class="field">
+            <span>Business Address</span>
+            <input
+              name="businessAddress"
+              type="text"
+              value="123 Market Street"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Preferred Date</span>
+            <input name="preferredDate" type="date" required />
+          </label>
+          <label class="field">
+            <span>Preferred Time</span>
+            <input name="preferredTime" type="time" required />
+          </label>
+          <label class="field span">
+            <span>Special Request</span>
+            <textarea
+              name="specialRequest"
+              rows="3"
+              placeholder="Let us know access requirements or special instructions."
+              required
+            ></textarea>
+          </label>
+          <button class="btn primary span" type="submit">
+            Submit Quote Request
+          </button>
+        </form>
+
+        <div class="result">
+          <div>
+            <p class="label">Quote ID</p>
+            <p id="manual-quote-id">-</p>
+          </div>
+          <div>
+            <p class="label">Status</p>
+            <p id="manual-quote-status">-</p>
+          </div>
+          <div>
+            <p class="label">Service Type</p>
+            <p id="manual-quote-type">-</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card muted">
+        <h3>How it works</h3>
+        <ul>
+          <li>Load active services and create a residential payment flow.</li>
+          <li>Complete payment on Stripe, then poll status or confirm.</li>
+          <li>Submit manual quotes for commercial or post-construction jobs.</li>
+        </ul>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

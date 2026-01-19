@@ -18,6 +18,12 @@ router.post(
   quoteController.confirmPayment
 );
 
+router.get(
+  "/payment-status",
+  authMiddleware.optionalAuth,
+  quoteController.getPaymentStatus
+);
+
 router.post(
   "/commercial",
   authMiddleware.optionalAuth,

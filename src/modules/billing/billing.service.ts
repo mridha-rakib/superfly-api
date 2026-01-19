@@ -8,6 +8,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import { CleaningServiceService } from "../cleaning-service/cleaning-service.service";
+import { QuotePaymentDraftRepository } from "../quote/quote-payment.repository";
 import { QuotePricingService } from "../quote/quote.pricing";
 import { UserService } from "../user/user.service";
 import { stripeCheckoutUrls } from "./billing.config";
@@ -24,6 +25,7 @@ import { StripeEventRepository } from "./stripe-event.repository";
 export class BillingService {
   private paymentRepository: BillingPaymentRepository;
   private eventRepository: StripeEventRepository;
+  private quotePaymentDraftRepository: QuotePaymentDraftRepository;
   private cleaningServiceService: CleaningServiceService;
   private pricingService: QuotePricingService;
   private userService: UserService;
@@ -31,6 +33,7 @@ export class BillingService {
   constructor() {
     this.paymentRepository = new BillingPaymentRepository();
     this.eventRepository = new StripeEventRepository();
+    this.quotePaymentDraftRepository = new QuotePaymentDraftRepository();
     this.cleaningServiceService = new CleaningServiceService();
     this.pricingService = new QuotePricingService();
     this.userService = new UserService();
@@ -73,6 +76,12 @@ export class BillingService {
       throw new BadRequestException("No billable services selected");
     }
 
+    if (pricing.currency.toUpperCase() !== "USD") {
+      throw new BadRequestException(
+        "Only USD is supported for Stripe payments",
+      );
+    }
+
     const mode: BillingMode = payload.mode || "payment";
 
     const currency = pricing.currency.toLowerCase();
@@ -95,6 +104,7 @@ export class BillingService {
       mode,
       success_url: stripeCheckoutUrls.successUrl,
       cancel_url: stripeCheckoutUrls.cancelUrl,
+      payment_method_types: ["card"],
       line_items: items.map((item) => {
         const priceData: Stripe.Checkout.SessionCreateParams.LineItem.PriceData =
           {
@@ -196,6 +206,9 @@ export class BillingService {
           "paid",
         );
         break;
+      case "payment_intent.created":
+        logger.debug({ eventType: event.type }, "Stripe payment intent created");
+        break;
       case "payment_intent.payment_failed":
         await this.updateFromPaymentIntent(
           event.data.object as Stripe.PaymentIntent,
@@ -213,6 +226,10 @@ export class BillingService {
           event.data.object as Stripe.Invoice,
           "failed",
         );
+        break;
+      case "charge.succeeded":
+      case "charge.updated":
+        logger.debug({ eventType: event.type }, "Stripe charge event ignored");
         break;
       default:
         logger.info({ eventType: event.type }, "Unhandled Stripe event");
@@ -249,10 +266,16 @@ export class BillingService {
     );
 
     if (!updated) {
-      logger.warn(
-        { stripeSessionId: session.id },
-        "Stripe session not tracked",
+      const draftUpdated = await this.updateQuoteDraftFromSession(
+        session,
+        status,
       );
+      if (!draftUpdated) {
+        logger.warn(
+          { stripeSessionId: session.id },
+          "Stripe session not tracked",
+        );
+      }
     }
   }
 
@@ -283,10 +306,26 @@ export class BillingService {
     );
 
     if (!updated) {
-      logger.warn(
-        { paymentIntentId: paymentIntent.id },
-        "Payment intent not tracked",
+      let draftUpdated = await this.updateQuoteDraftFromPaymentIntent(
+        paymentIntent,
+        status,
       );
+      if (!draftUpdated) {
+        const session =
+          await this.findCheckoutSessionForPaymentIntent(paymentIntent.id);
+        if (session) {
+          draftUpdated = await this.updateQuoteDraftFromSession(
+            session,
+            status,
+          );
+        }
+      }
+      if (!draftUpdated) {
+        logger.warn(
+          { paymentIntentId: paymentIntent.id },
+          "Payment intent not tracked",
+        );
+      }
     }
   }
 
@@ -327,6 +366,79 @@ export class BillingService {
     }
 
     return update;
+  }
+
+  private async updateQuoteDraftFromSession(
+    session: Stripe.Checkout.Session,
+    status: BillingStatus,
+  ): Promise<boolean> {
+    const update: Record<string, any> = {};
+    const paymentIntentId = this.resolveStripeId(session.payment_intent);
+
+    if (paymentIntentId) {
+      update.paymentIntentId = paymentIntentId;
+    }
+
+    if (status === "paid") {
+      update.paymentStatus = "completed";
+    }
+
+    if (Object.keys(update).length > 0) {
+      const updated =
+        await this.quotePaymentDraftRepository.updateByStripeSessionId(
+          session.id,
+          update,
+        );
+      return Boolean(updated);
+    }
+
+    const existing =
+      await this.quotePaymentDraftRepository.findByStripeSessionId(session.id);
+    return Boolean(existing);
+  }
+
+  private async updateQuoteDraftFromPaymentIntent(
+    paymentIntent: Stripe.PaymentIntent,
+    status: BillingStatus,
+  ): Promise<boolean> {
+    const update: Record<string, any> = {};
+
+    if (status === "paid") {
+      update.paymentStatus = "completed";
+    }
+
+    if (Object.keys(update).length > 0) {
+      const updated =
+        await this.quotePaymentDraftRepository.updateByPaymentIntentId(
+          paymentIntent.id,
+          update,
+        );
+      return Boolean(updated);
+    }
+
+    const existing =
+      await this.quotePaymentDraftRepository.findByPaymentIntentId(
+        paymentIntent.id,
+      );
+    return Boolean(existing);
+  }
+
+  private async findCheckoutSessionForPaymentIntent(
+    paymentIntentId: string,
+  ): Promise<Stripe.Checkout.Session | null> {
+    try {
+      const sessions = await stripeService.listCheckoutSessionsByPaymentIntent(
+        paymentIntentId,
+        1,
+      );
+      return sessions.data[0] || null;
+    } catch (error) {
+      logger.debug(
+        { paymentIntentId, error },
+        "Failed to lookup checkout session for payment intent",
+      );
+      return null;
+    }
   }
 
   private normalizeServiceSelections(
