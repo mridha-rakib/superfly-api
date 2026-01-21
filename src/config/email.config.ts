@@ -6,12 +6,33 @@ const postmarkConfigured = Boolean(env.POSTMARK_API_TOKEN);
 const smtpConfigured = Boolean(
   env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS
 );
+const providerPreference = env.EMAIL_PROVIDER;
+const postmarkSandboxMode = env.POSTMARK_SANDBOX_MODE ?? false;
 
-const provider = postmarkConfigured
-  ? "postmark"
-  : smtpConfigured
-    ? "smtp"
-    : "disabled";
+const resolveProvider = (): "postmark" | "smtp" | "disabled" => {
+  switch (providerPreference) {
+    case "postmark":
+      return postmarkConfigured ? "postmark" : "disabled";
+    case "smtp":
+      return smtpConfigured ? "smtp" : "disabled";
+    case "disabled":
+      return "disabled";
+    case "auto":
+    default:
+      if (postmarkConfigured && !postmarkSandboxMode) {
+        return "postmark";
+      }
+      if (smtpConfigured) {
+        return "smtp";
+      }
+      if (postmarkConfigured) {
+        return "postmark";
+      }
+      return "disabled";
+  }
+};
+
+const provider = resolveProvider();
 const fromAddress = env.EMAIL_FROM_ADDRESS || env.SMTP_FROM || env.SMTP_USER || "";
 
 export const EMAIL_CONFIG = {

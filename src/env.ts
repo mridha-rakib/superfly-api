@@ -21,6 +21,9 @@ const envSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
 
+  EMAIL_PROVIDER: z
+    .enum(["auto", "postmark", "smtp", "disabled"])
+    .default("auto"),
   EMAIL_MAX_RETRIES: z.coerce.number().int().min(0).default(0),
   EMAIL_RETRY_DELAY_MS: z.coerce.number().int().min(0).default(0),
   EMAIL_FROM_NAME: z.string().optional(),

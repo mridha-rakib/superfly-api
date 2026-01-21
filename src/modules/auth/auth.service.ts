@@ -50,7 +50,7 @@ export class AuthService {
    */
   async login(payload: LoginPayload): Promise<AuthServiceResponse> {
     const user = await this.userService.getUserByEmailWithPassword(
-      payload.email
+      payload.email,
     );
 
     if (!user) {
@@ -76,7 +76,7 @@ export class AuthService {
 
     const isPasswordValid = await comparePassword(
       payload.password,
-      user.password
+      user.password,
     );
 
     if (!isPasswordValid) {
@@ -151,7 +151,7 @@ export class AuthService {
 
     logger.info(
       { userId: result.userId, userType: result.userType },
-      "Email verified and user marked"
+      "Email verified and user marked",
     );
 
     await this.emailService.sendWelcomeEmail({
@@ -168,7 +168,7 @@ export class AuthService {
    * Request password reset
    */
   async requestPasswordReset(
-    email: string
+    email: string,
   ): Promise<{ message: string; expiresAt?: Date; expiresInMinutes?: number }> {
     const user = await this.userService.getUserByEmail(email);
 
@@ -180,12 +180,12 @@ export class AuthService {
     const result = await this.passwordResetService.requestPasswordReset(
       user._id.toString(),
       user.email,
-      user.fullName
+      user.fullName,
     );
 
     logger.info(
       { userId: user._id, email: user.email },
-      "Password reset requested"
+      "Password reset requested",
     );
 
     return result;
@@ -196,7 +196,7 @@ export class AuthService {
    */
   async verifyPasswordOTP(
     email: string,
-    otp: string
+    otp: string,
   ): Promise<{ message: string }> {
     // Step 1: Find user
     const user = await this.userService.getUserByEmail(email);
@@ -208,7 +208,7 @@ export class AuthService {
     // Step 2: Verify OTP
     const result = await this.passwordResetService.verifyOTP(
       user._id.toString(),
-      otp
+      otp,
     );
 
     logger.info({ userId: user._id, email }, "Password reset OTP verified");
@@ -236,7 +236,7 @@ export class AuthService {
   async resetPassword(
     email: string,
     otp: string,
-    newPassword: string
+    newPassword: string,
   ): Promise<{ message: string }> {
     // Step 1: Find user
     const user = await this.userService.getUserByEmail(email);
@@ -263,12 +263,12 @@ export class AuthService {
     // Step 7: Send security notification email
     await this.emailService.sendPasswordResetConfirmation(
       user.fullName,
-      user.email
+      user.email,
     );
 
     logger.info(
       { userId: user._id, email },
-      "Password reset successfully completed"
+      "Password reset successfully completed",
     );
 
     // Step 8: Log out user from all devices (invalidate all tokens)
@@ -285,7 +285,7 @@ export class AuthService {
    * Resend password reset OTP
    */
   async resendPasswordOTP(
-    email: string
+    email: string,
   ): Promise<{ message: string; expiresAt?: Date; expiresInMinutes?: number }> {
     const user = await this.userService.getUserByEmail(email);
 
@@ -299,7 +299,7 @@ export class AuthService {
     const result = await this.passwordResetService.requestPasswordReset(
       user._id.toString(),
       user.email,
-      user.fullName
+      user.fullName,
     );
 
     logger.info({ userId: user._id, email }, "Password reset OTP resent");
@@ -311,7 +311,7 @@ export class AuthService {
    * Refresh access token
    */
   async refreshAccessToken(
-    refreshToken: string
+    refreshToken: string,
   ): Promise<{ accessToken: string }> {
     try {
       const payload = AuthUtil.verifyRefreshToken(refreshToken);
@@ -377,7 +377,7 @@ export class AuthService {
    * Resend verification code
    */
   async resendVerificationCode(
-    request: Partial<IResendOTPRequest>
+    request: Partial<IResendOTPRequest>,
   ): Promise<{ message: string }> {
     // Find user first
     const user = await this.userService.getUserByEmail(request.email!);
@@ -409,7 +409,7 @@ export class AuthService {
         userType,
         userId: user._id,
       },
-      "Verification code resend initiated"
+      "Verification code resend initiated",
     );
 
     return { message: result.message };
@@ -423,7 +423,7 @@ export class AuthService {
     try {
       logger.info(
         { userId, token: token.substring(0, 20) + "..." },
-        "User logged out"
+        "User logged out",
       );
 
       // [TODO]:
@@ -444,7 +444,7 @@ export class AuthService {
   async changePassword(
     userId: string,
     currentPassword: string,
-    newPassword: string
+    newPassword: string,
   ): Promise<{ message: string }> {
     // Step 1: Get user by ID (including password field)
     const user = await this.userService.getUserByIdWithPassword(userId);
@@ -456,13 +456,13 @@ export class AuthService {
     // Step 2: Verify current password matches
     const isPasswordValid = await comparePassword(
       currentPassword,
-      user.password!
+      user.password!,
     );
 
     if (!isPasswordValid) {
       logger.warn(
         { userId },
-        "Invalid current password attempt for password change"
+        "Invalid current password attempt for password change",
       );
       throw new UnauthorizedException("Current password is incorrect");
     }
@@ -480,7 +480,7 @@ export class AuthService {
     await this.userService.notifyPasswordChange(
       user.email,
       user.fullName,
-      new Date()
+      new Date(),
     );
 
     logger.info({ userId, email: user.email }, "Password changed successfully");
