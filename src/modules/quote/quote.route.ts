@@ -57,6 +57,13 @@ router.patch(
   quoteController.assignCleaner
 );
 
+router.delete(
+  "/:quoteId",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.deleteQuote
+);
+
 router.get(
   "/cleaner/assigned",
   authMiddleware.verifyToken,

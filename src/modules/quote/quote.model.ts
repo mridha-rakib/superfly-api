@@ -104,6 +104,13 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     ref: "User",
     index: true,
   },
+  assignedCleanerIds: [
+    {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      index: true,
+    },
+  ],
   assignedCleanerAt: {
     type: Date,
   },

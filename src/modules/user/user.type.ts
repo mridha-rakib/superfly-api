@@ -1,6 +1,7 @@
 // file: src/modules/user/user.type.ts
 
 import type { ACCOUNT_STATUS, ROLES } from "@/constants/app.constants";
+import type { PaginationQuery as BasePaginationQuery } from "@/ts/pagination.types";
 
 export type UserResponse = {
   _id: string;
@@ -39,6 +40,18 @@ export type CleanerCreatePayload = {
   phoneNumber?: string;
   address?: string;
 };
+
+export type CleanerCreationResult = {
+  cleaner: UserResponse;
+  emailSent: boolean;
+  emailWarning?: string;
+  /**
+   * Only returned when email delivery fails so admins can share credentials manually.
+   */
+  temporaryPassword?: string;
+};
+
+export type PaginationQuery = BasePaginationQuery;
 
 export type UpdateUserPayload = {
   fullName?: string;

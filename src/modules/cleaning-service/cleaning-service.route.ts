@@ -12,42 +12,42 @@ router.get(
   "/admin",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.listAll
+  controller.listAll,
 );
 
 router.get(
   "/price-history",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.listPriceHistory
+  controller.listPriceHistory,
 );
 
 router.post(
   "/",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.createService
+  controller.createService,
 );
 
 router.put(
   "/:serviceId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.updateService
+  controller.updateService,
 );
 
 router.patch(
   "/:serviceId/price",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.updatePrice
+  controller.updatePrice,
 );
 
 router.delete(
   "/:serviceId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.deleteService
+  controller.deleteService,
 );
 
 export default router;

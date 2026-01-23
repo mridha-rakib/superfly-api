@@ -17,4 +17,32 @@ router.post(
   userController.createCleaner
 );
 
+router.get(
+  "/cleaners",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  userController.listCleaners
+);
+
+router.get(
+  "/cleaners/:cleanerId",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  userController.getCleaner
+);
+
+router.put(
+  "/cleaners/:cleanerId",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  userController.updateCleaner
+);
+
+router.delete(
+  "/cleaners/:cleanerId",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  userController.deleteCleaner
+);
+
 export default router;

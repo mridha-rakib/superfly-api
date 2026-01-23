@@ -616,31 +616,56 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
+    const cleanerIds = payload.cleanerIds?.length
+      ? payload.cleanerIds
+      : payload.cleanerId
+        ? [payload.cleanerId]
+        : [];
+
+    if (cleanerIds.length === 0) {
+      throw new BadRequestException("Cleaner id is required");
+    }
+
+    const uniqueCleanerIds = Array.from(new Set(cleanerIds));
+    const cleaners = await Promise.all(
+      uniqueCleanerIds.map(async (id) => {
+        const cleaner = await this.userService.getById(id);
+        if (!cleaner) {
+          throw new NotFoundException(`Cleaner not found: ${id}`);
+        }
+        if (cleaner.role !== ROLES.CLEANER) {
+          throw new BadRequestException(
+            `Assigned user is not a cleaner: ${id}`,
+          );
+        }
+        return cleaner;
+      }),
+    );
+
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
-    if (serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+    if (
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL &&
+      cleaners.length > 1
+    ) {
       throw new BadRequestException(
-        "Cleaner assignment is only supported for residential quotes",
+        "Residential quotes allow only one cleaner",
       );
     }
 
-    const cleaner = await this.userService.getById(payload.cleanerId);
-    if (!cleaner) {
-      throw new NotFoundException("Cleaner not found");
-    }
-    if (cleaner.role !== ROLES.CLEANER) {
-      throw new BadRequestException("Assigned user is not a cleaner");
-    }
+    const primaryCleaner = cleaners[0];
+
     if (
-      cleaner.cleanerPercentage === undefined ||
-      cleaner.cleanerPercentage === null
+      primaryCleaner.cleanerPercentage === undefined ||
+      primaryCleaner.cleanerPercentage === null
     ) {
       throw new BadRequestException("Cleaner percentage is not configured");
     }
 
     const updated = await this.quoteRepository.updateById(quoteId, {
-      assignedCleanerId: cleaner._id,
+      assignedCleanerId: primaryCleaner._id,
+      assignedCleanerIds: cleaners.map((c) => c._id),
       assignedCleanerAt: new Date(),
-      cleanerPercentage: cleaner.cleanerPercentage,
+      cleanerPercentage: primaryCleaner.cleanerPercentage,
     });
 
     if (!updated) {
@@ -648,6 +673,22 @@ export class QuoteService {
     }
 
     return this.toResponse(updated);
+  }
+
+  async deleteQuote(quoteId: string): Promise<void> {
+    const quote = await this.quoteRepository.findById(quoteId);
+    if (!quote) {
+      throw new NotFoundException("Quote not found");
+    }
+
+    const deleted = await this.quoteRepository.updateById(quoteId, {
+      isDeleted: true,
+      deletedAt: new Date(),
+    });
+
+    if (!deleted) {
+      throw new NotFoundException("Quote not found");
+    }
   }
 
   async getPaginated(
@@ -698,10 +739,15 @@ export class QuoteService {
     }
 
     if (requester.role === ROLES.CLEANER) {
-      if (
-        !quote.assignedCleanerId ||
-        quote.assignedCleanerId.toString() !== requester.userId
-      ) {
+      const isPrimary =
+        quote.assignedCleanerId &&
+        quote.assignedCleanerId.toString() === requester.userId;
+      const isInList =
+        quote.assignedCleanerIds &&
+        quote.assignedCleanerIds
+          .map((id) => id.toString())
+          .includes(requester.userId);
+      if (!isPrimary && !isInList) {
         throw new ForbiddenException("Cleaner is not assigned to this quote");
       }
       return this.toResponse(quote);
@@ -1039,6 +1085,7 @@ export class QuoteService {
       paidAt: quote.paidAt,
       adminNotifiedAt: quote.adminNotifiedAt,
       assignedCleanerId: quote.assignedCleanerId?.toString(),
+      assignedCleanerIds: quote.assignedCleanerIds?.map((id) => id.toString()),
       assignedCleanerAt: quote.assignedCleanerAt,
       cleaningStatus,
       reportStatus,

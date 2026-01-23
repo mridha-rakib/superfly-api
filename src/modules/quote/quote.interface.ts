@@ -51,6 +51,7 @@ export interface IQuote extends Document {
   paymentStatus?: "paid";
   paidAt?: Date;
   adminNotifiedAt?: Date;
+  assignedCleanerIds?: Array<Types.ObjectId | string>;
   assignedCleanerId?: Types.ObjectId | string;
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;

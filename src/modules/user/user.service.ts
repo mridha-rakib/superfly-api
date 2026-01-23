@@ -1,6 +1,13 @@
 // file: src/modules/user/user.service.ts (ENHANCED VERSION)
 
-import { ACCOUNT_STATUS, MESSAGES, ROLES } from "@/constants/app.constants";
+import { EMAIL_ENABLED } from "@/config/email.config";
+import { env } from "@/env";
+import {
+  ACCOUNT_STATUS,
+  MESSAGES,
+  PAGINATION,
+  ROLES,
+} from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
 import { EmailService } from "@/services/email.service";
 import {
@@ -13,6 +20,8 @@ import type { IUser } from "./user.interface";
 import { UserRepository } from "./user.repository";
 import type {
   CleanerCreatePayload,
+  CleanerCreationResult,
+  PaginationQuery,
   UserCreatePayload,
   UserResponse,
 } from "./user.type";
@@ -48,6 +57,63 @@ export class UserService {
     return this.toUserResponse(user);
   }
 
+  async listCleaners(query: PaginationQuery) {
+    const page = query.page ? Number(query.page) : PAGINATION.DEFAULT_PAGE;
+    const limit = query.limit ? Number(query.limit) : PAGINATION.DEFAULT_LIMIT;
+
+    const filter: Record<string, any> = {
+      role: ROLES.CLEANER,
+    };
+
+    if (query.status) {
+      filter.accountStatus = query.status;
+    }
+
+    if (query.search) {
+      const pattern = new RegExp(query.search, "i");
+      filter.$or = [
+        { fullName: { $regex: pattern } },
+        { email: { $regex: pattern } },
+      ];
+    }
+
+    const result = await this.userRepository.paginate(filter, {
+      page,
+      limit,
+      sort: { createdAt: -1 },
+      select: "-password",
+    });
+
+    return {
+      data: (result.data || []).map((user) => this.toUserResponse(user as any)),
+      pagination: result.pagination || {
+        currentPage: result.currentPage,
+        totalPages: result.pageCount,
+        totalItems: result.totalItems,
+        itemsPerPage: result.itemsPerPage,
+        hasNext: result.hasNext,
+        hasPrev: result.hasPrev,
+        nextPage: result.nextPage,
+        prevPage: result.prevPage,
+        slNo: result.slNo,
+      },
+    };
+  }
+
+  async getCleanerById(cleanerId: string): Promise<UserResponse> {
+    const cleaner = await this.userRepository.findOne({
+      _id: cleanerId,
+      role: ROLES.CLEANER,
+      isDeleted: false,
+    });
+
+    if (!cleaner) {
+      throw new NotFoundException("Cleaner not found");
+    }
+
+    return this.toUserResponse(cleaner);
+  }
+
   async createUser(payload: UserCreatePayload): Promise<IUser> {
     const existing = await this.userRepository.findByEmail(payload.email);
     if (existing) {
@@ -73,8 +139,11 @@ export class UserService {
     });
   }
 
-  async createCleaner(payload: CleanerCreatePayload): Promise<UserResponse> {
-    const existing = await this.userRepository.findByEmail(payload.email);
+  async createCleaner(
+    payload: CleanerCreatePayload
+  ): Promise<CleanerCreationResult> {
+    const email = payload.email.toLowerCase();
+    const existing = await this.userRepository.findByEmail(email);
     if (existing) {
       throw new ConflictException(MESSAGES.AUTH.EMAIL_ALREADY_EXISTS);
     }
@@ -91,7 +160,7 @@ export class UserService {
     const hashedPassword = await hashPassword(tempPassword);
 
     const cleaner = await this.userRepository.create({
-      email: payload.email.toLowerCase(),
+      email,
       password: hashedPassword,
       fullName: payload.fullName,
       phoneNumber: payload.phoneNumber,
@@ -104,14 +173,105 @@ export class UserService {
       cleanerPercentage: payload.cleanerPercentage,
     });
 
-    await this.emailService.sendAccountCredentials({
-      to: cleaner.email,
-      userName: cleaner.fullName,
-      userType: cleaner.role,
-      password: tempPassword,
+    const emailSendingEnabled = EMAIL_ENABLED && env.NODE_ENV !== "test";
+    let emailSent = false;
+    let emailWarning: string | undefined = emailSendingEnabled
+      ? undefined
+      : "Cleaner created, but email delivery is disabled. Share the credentials manually.";
+    try {
+      await this.emailService.sendAccountCredentials({
+        to: cleaner.email,
+        userName: cleaner.fullName,
+        userType: cleaner.role,
+        password: tempPassword,
+      });
+      emailSent = emailSendingEnabled;
+    } catch (error) {
+      emailSent = false;
+      emailWarning =
+        "Cleaner created, but sending login credentials via email failed.";
+      logger.warn(
+        { email: cleaner.email, error },
+        "Failed to send cleaner credentials email"
+      );
+    }
+
+    return {
+      cleaner: this.toUserResponse(cleaner),
+      emailSent,
+      emailWarning,
+      temporaryPassword: emailSent ? undefined : tempPassword,
+    };
+  }
+
+  async updateCleaner(
+    cleanerId: string,
+    payload: Partial<CleanerCreatePayload> & { accountStatus?: string }
+  ): Promise<UserResponse> {
+    const cleaner = await this.userRepository.findOne({
+      _id: cleanerId,
+      role: ROLES.CLEANER,
+      isDeleted: false,
     });
 
+    if (!cleaner) {
+      throw new NotFoundException("Cleaner not found");
+    }
+
+    if (payload.email) {
+      const newEmail = payload.email.toLowerCase();
+      if (newEmail !== cleaner.email) {
+        const existing = await this.userRepository.findByEmail(newEmail);
+        if (existing && existing._id.toString() !== cleanerId) {
+          throw new ConflictException(MESSAGES.AUTH.EMAIL_ALREADY_EXISTS);
+        }
+        cleaner.email = newEmail;
+      }
+    }
+
+    if (payload.fullName) {
+      cleaner.fullName = payload.fullName.trim();
+    }
+
+    if (payload.phoneNumber !== undefined) {
+      cleaner.phoneNumber = payload.phoneNumber;
+    }
+
+    if (payload.address !== undefined) {
+      cleaner.address = payload.address;
+    }
+
+    if (payload.cleanerPercentage !== undefined) {
+      if (
+        Number.isNaN(payload.cleanerPercentage) ||
+        payload.cleanerPercentage < 0 ||
+        payload.cleanerPercentage > 100
+      ) {
+        throw new BadRequestException("Cleaner percentage must be 0-100");
+      }
+      cleaner.cleanerPercentage = payload.cleanerPercentage;
+    }
+
+    if (payload.accountStatus) {
+      cleaner.accountStatus = payload.accountStatus as (typeof ACCOUNT_STATUS)[keyof typeof ACCOUNT_STATUS];
+    }
+
+    await cleaner.save();
     return this.toUserResponse(cleaner);
+  }
+
+  async deleteCleaner(cleanerId: string): Promise<void> {
+    const cleaner = await this.userRepository.findOne({
+      _id: cleanerId,
+      role: ROLES.CLEANER,
+      isDeleted: false,
+    });
+
+    if (!cleaner) {
+      throw new NotFoundException("Cleaner not found");
+    }
+
+    await this.userRepository.softDelete(cleanerId);
   }
 
   async getUserByEmail(email: string): Promise<IUser | null> {

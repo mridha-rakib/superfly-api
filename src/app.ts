@@ -24,13 +24,13 @@ app.use(
   cors({
     origin: true,
     credentials: true,
-  })
+  }),
 );
 
 app.use(
   `${env.BASE_URL}/billing/webhook`,
   express.raw({ type: "application/json" }),
-  billingWebhookRouter
+  billingWebhookRouter,
 );
 
 app.use(express.json());
@@ -50,7 +50,7 @@ app.use(
       tagsSorter: "alpha",
       operationsSorter: "method",
     },
-  })
+  }),
 );
 
 app.get<object>("/", (req, res) => {

@@ -154,7 +154,10 @@ export class QuoteController {
       }
 
       const cleanerFilter = {
-        assignedCleanerId: new Types.ObjectId(userId),
+        $or: [
+          { assignedCleanerId: new Types.ObjectId(userId) },
+          { assignedCleanerIds: new Types.ObjectId(userId) },
+        ],
       };
 
       if (req.query.page || req.query.limit) {
@@ -248,5 +251,11 @@ export class QuoteController {
     );
 
     ApiResponse.success(res, quote, "Cleaner assigned successfully");
+  });
+
+  deleteQuote = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(quoteDetailSchema, req);
+    await this.quoteService.deleteQuote(validated.params.quoteId);
+    ApiResponse.success(res, { message: "Quote deleted successfully" });
   });
 }

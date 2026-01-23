@@ -16,7 +16,10 @@ export class QuoteRepository extends BaseRepository<IQuote> {
       .aggregate([
         {
           $match: {
-            assignedCleanerId: new Types.ObjectId(cleanerId),
+            $or: [
+              { assignedCleanerId: new Types.ObjectId(cleanerId) },
+              { assignedCleanerIds: new Types.ObjectId(cleanerId) },
+            ],
             serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
             reportStatus: QUOTE.REPORT_STATUSES.APPROVED,
             isDeleted: { $ne: true },
@@ -25,7 +28,25 @@ export class QuoteRepository extends BaseRepository<IQuote> {
         {
           $group: {
             _id: null,
-            total: { $sum: { $ifNull: ["$cleanerEarningAmount", 0] } },
+            total: {
+              $sum: {
+                $cond: [
+                  { $ifNull: ["$assignedCleanerIds", false] },
+                  {
+                    $divide: [
+                      { $ifNull: ["$cleanerEarningAmount", 0] },
+                      {
+                        $max: [
+                          { $size: { $ifNull: ["$assignedCleanerIds", []] } },
+                          1,
+                        ],
+                      },
+                    ],
+                  },
+                  { $ifNull: ["$cleanerEarningAmount", 0] },
+                ],
+              },
+            },
             count: { $sum: 1 },
           },
         },

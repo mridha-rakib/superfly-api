@@ -74,9 +74,15 @@ export const updateQuoteStatusSchema = z.object({
 });
 
 export const assignQuoteCleanerSchema = z.object({
-  body: z.object({
-    cleanerId: z.string().min(1),
-  }),
+  body: z
+    .object({
+      cleanerId: z.string().min(1).optional(),
+      cleanerIds: z.array(z.string().min(1)).min(1).optional(),
+    })
+    .refine(
+      (data) => Boolean(data.cleanerId || (data.cleanerIds && data.cleanerIds.length)),
+      { message: "cleanerId or cleanerIds is required" }
+    ),
   params: z.object({
     quoteId: z.string().min(1),
   }),

@@ -6,7 +6,12 @@ import { UnauthorizedException } from "@/utils/app-error.utils";
 import { ApiResponse } from "@/utils/response.utils";
 import { zParse } from "@/utils/validators.utils";
 import type { Request, Response } from "express";
-import { createCleanerSchema } from "./user.schema";
+import {
+  cleanerIdSchema,
+  createCleanerSchema,
+  listCleanersSchema,
+  updateCleanerSchema,
+} from "./user.schema";
 import { UserService } from "./user.service";
 
 export class UserController {
@@ -15,6 +20,25 @@ export class UserController {
   constructor() {
     this.userService = new UserService();
   }
+
+  listCleaners = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(listCleanersSchema, req);
+    const result = await this.userService.listCleaners(validated.query);
+    ApiResponse.paginated(
+      res,
+      result.data,
+      result.pagination,
+      "Cleaners fetched successfully"
+    );
+  });
+
+  getCleaner = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(cleanerIdSchema, req);
+    const cleaner = await this.userService.getCleanerById(
+      validated.params.cleanerId
+    );
+    ApiResponse.success(res, cleaner, "Cleaner fetched successfully");
+  });
 
   getProfile = asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.userId;
@@ -27,7 +51,25 @@ export class UserController {
 
   createCleaner = asyncHandler(async (req: Request, res: Response) => {
     const validated = await zParse(createCleanerSchema, req);
-    const cleaner = await this.userService.createCleaner(validated.body);
-    ApiResponse.created(res, cleaner, "Cleaner created successfully");
+    const result = await this.userService.createCleaner(validated.body);
+    const message = result.emailSent
+      ? "Cleaner created successfully"
+      : "Cleaner created, but email delivery failed";
+    ApiResponse.created(res, result, message);
+  });
+
+  updateCleaner = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(updateCleanerSchema, req);
+    const cleaner = await this.userService.updateCleaner(
+      validated.params.cleanerId,
+      validated.body
+    );
+    ApiResponse.success(res, cleaner, "Cleaner updated successfully");
+  });
+
+  deleteCleaner = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(cleanerIdSchema, req);
+    await this.userService.deleteCleaner(validated.params.cleanerId);
+    ApiResponse.success(res, { message: "Cleaner deleted successfully" });
   });
 }

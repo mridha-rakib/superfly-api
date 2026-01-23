@@ -44,7 +44,8 @@ export type QuoteStatusUpdatePayload = {
 };
 
 export type QuoteAssignCleanerPayload = {
-  cleanerId: string;
+  cleanerId?: string;
+  cleanerIds?: string[];
 };
 
 export type QuoteResponse = {
@@ -71,6 +72,7 @@ export type QuoteResponse = {
   paidAt?: Date;
   adminNotifiedAt?: Date;
   assignedCleanerId?: string;
+  assignedCleanerIds?: string[];
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
