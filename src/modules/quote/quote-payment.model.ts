@@ -37,6 +37,11 @@ const quotePaymentDraftSchema = BaseSchemaUtil.createSchema<IQuotePaymentDraft>(
       required: true,
       index: true,
     },
+    preferredTime: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     notes: {
       type: String,
       trim: true,

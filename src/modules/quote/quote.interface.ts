@@ -70,6 +70,7 @@ export interface IQuotePaymentDraft extends Document {
   email: string;
   phoneNumber: string;
   serviceDate: string;
+  preferredTime: string;
   notes?: string;
   services: IQuoteServiceItem[];
   totalPrice: number;

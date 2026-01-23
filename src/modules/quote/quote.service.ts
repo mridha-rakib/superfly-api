@@ -66,6 +66,7 @@ export class QuoteService {
       payload,
       requestUserId,
     );
+    const preferredTime = payload.preferredTime.trim();
     const pricingInput = this.normalizeServiceSelections(payload.services);
     const requestedCodes = Object.keys(pricingInput);
     const activeServices = requestedCodes.length
@@ -109,6 +110,7 @@ export class QuoteService {
         metadata: {
           userId: userId || "",
           serviceDate,
+          preferredTime,
         },
       });
 
@@ -125,6 +127,7 @@ export class QuoteService {
         email: contact.email!,
         phoneNumber: contact.phoneNumber!,
         serviceDate,
+        preferredTime,
         notes: payload.notes?.trim(),
         services: pricing.items,
         totalPrice: pricing.total,
@@ -167,6 +170,7 @@ export class QuoteService {
       metadata: {
         userId: userId || "",
         serviceDate,
+        preferredTime,
       },
     });
 
@@ -183,6 +187,7 @@ export class QuoteService {
       email: contact.email!,
       phoneNumber: contact.phoneNumber!,
       serviceDate,
+      preferredTime,
       notes: payload.notes?.trim(),
       services: pricing.items,
       totalPrice: pricing.total,
@@ -285,6 +290,7 @@ export class QuoteService {
       email: draft.email.toLowerCase(),
       phoneNumber: draft.phoneNumber,
       serviceDate: draft.serviceDate,
+      preferredTime: draft.preferredTime,
       notes: draft.notes,
       services: draft.services,
       totalPrice: draft.totalPrice,
@@ -409,6 +415,7 @@ export class QuoteService {
       email: draft.email.toLowerCase(),
       phoneNumber: draft.phoneNumber,
       serviceDate: draft.serviceDate,
+      preferredTime: draft.preferredTime,
       notes: draft.notes,
       services: draft.services,
       totalPrice: draft.totalPrice,
@@ -476,6 +483,10 @@ export class QuoteService {
       paymentIntentId,
       quoteId: draft.quoteId?.toString(),
       stripeStatus,
+      serviceDate: draft.serviceDate,
+      preferredTime: draft.preferredTime,
+      paymentAmount: draft.paymentAmount,
+      currency: draft.currency,
     };
   }
 
@@ -514,6 +525,10 @@ export class QuoteService {
       checkoutSessionId: draft.stripeSessionId,
       quoteId: draft.quoteId?.toString(),
       stripeStatus: paymentIntent.status,
+      serviceDate: draft.serviceDate,
+      preferredTime: draft.preferredTime,
+      paymentAmount: draft.paymentAmount,
+      currency: draft.currency,
     };
   }
 
@@ -1038,6 +1053,7 @@ export class QuoteService {
   }
 
   toResponse(quote: IQuote): QuoteResponse {
+    const derived = this.deriveStatuses(quote);
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
     const status =
       quote.status ||
@@ -1064,6 +1080,9 @@ export class QuoteService {
       userId: quote.userId?.toString(),
       serviceType,
       status,
+      clientStatus: derived.clientStatus,
+      cleanerStatus: derived.cleanerStatus,
+      adminStatus: derived.adminStatus,
       contactName:
         quote.contactName ||
         this.formatContactName(quote.firstName, quote.lastName),
@@ -1140,5 +1159,52 @@ export class QuoteService {
       return value.id;
     }
     return undefined;
+  }
+
+  private deriveStatuses(quote: IQuote): {
+    clientStatus: string;
+    cleanerStatus: string;
+    adminStatus: string;
+  } {
+    const hasCleaner =
+      Boolean(quote.assignedCleanerId) ||
+      Boolean(quote.assignedCleanerIds && quote.assignedCleanerIds.length);
+    const cleaning = quote.cleaningStatus;
+    const report = quote.reportStatus;
+    const isCompleted =
+      report === QUOTE.REPORT_STATUSES.APPROVED ||
+      quote.status === QUOTE.STATUSES.COMPLETED;
+
+    // Client view
+    const clientStatus = (() => {
+      if (isCompleted) return "completed";
+      if (report === QUOTE.REPORT_STATUSES.PENDING && cleaning === QUOTE.CLEANING_STATUSES.COMPLETED)
+        return "report_submitted";
+      if (cleaning === QUOTE.CLEANING_STATUSES.IN_PROGRESS) return "ongoing";
+      if (hasCleaner) return "assigned";
+      return "booked";
+    })();
+
+    // Cleaner view
+    const cleanerStatus = (() => {
+      if (isCompleted) return "completed";
+      if (report === QUOTE.REPORT_STATUSES.PENDING && cleaning === QUOTE.CLEANING_STATUSES.COMPLETED)
+        return "waiting-for-admin-approval";
+      if (cleaning === QUOTE.CLEANING_STATUSES.IN_PROGRESS) return "ongoing";
+      if (hasCleaner) return "pending"; // assigned to cleaner but not started
+      return "pending";
+    })();
+
+    // Admin view
+    const adminStatus = (() => {
+      if (isCompleted) return "completed";
+      if (report === QUOTE.REPORT_STATUSES.PENDING && cleaning === QUOTE.CLEANING_STATUSES.COMPLETED)
+        return "report_submitted";
+      if (cleaning === QUOTE.CLEANING_STATUSES.IN_PROGRESS) return "on_site";
+      if (hasCleaner) return "assigned";
+      return "pending";
+    })();
+
+    return { clientStatus, cleanerStatus, adminStatus };
   }
 }

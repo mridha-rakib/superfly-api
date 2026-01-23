@@ -65,9 +65,9 @@ export const QUOTE = {
     COMPLETED: "completed",
   },
   CLEANING_STATUSES: {
-    PENDING: "pending",
-    IN_PROGRESS: "cleaning_in_progress",
-    COMPLETED: "completed",
+    PENDING: "pending", // paid, not started
+    IN_PROGRESS: "cleaning_in_progress", // on-site / ongoing
+    COMPLETED: "completed", // cleaner finished work
   },
   REPORT_STATUSES: {
     PENDING: "pending",

@@ -22,6 +22,7 @@ export type QuoteCreatePayload = {
   email?: string;
   phoneNumber?: string;
   serviceDate: string;
+  preferredTime: string;
   notes?: string;
   services: QuoteServiceSelection;
   paymentFlow?: "checkout" | "intent";
@@ -53,6 +54,9 @@ export type QuoteResponse = {
   userId?: string;
   serviceType: QuoteServiceType;
   status?: QuoteStatus;
+  clientStatus?: string;
+  cleanerStatus?: string;
+  adminStatus?: string;
   contactName?: string;
   firstName?: string;
   lastName?: string;
@@ -98,4 +102,8 @@ export type QuotePaymentStatusResponse = {
   checkoutSessionId?: string;
   quoteId?: string;
   stripeStatus?: string;
+  serviceDate?: string;
+  preferredTime?: string;
+  paymentAmount?: number;
+  currency?: string;
 };
