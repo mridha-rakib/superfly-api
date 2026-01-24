@@ -18,12 +18,15 @@ import {
   updateQuoteStatusSchema,
 } from "./quote.schema";
 import { QuoteService } from "./quote.service";
+import { UserService } from "../user/user.service";
 
 export class QuoteController {
   private quoteService: QuoteService;
+  private userService: UserService;
 
   constructor() {
     this.quoteService = new QuoteService();
+    this.userService = new UserService();
   }
 
   createPaymentIntent = asyncHandler(async (req: Request, res: Response) => {
@@ -203,6 +206,72 @@ export class QuoteController {
 
     const result = await this.quoteService.getCleanerEarnings(userId);
     ApiResponse.success(res, result, "Cleaner earnings fetched successfully");
+  });
+
+  listClientQuotes = asyncHandler(async (req: Request, res: Response) => {
+    let userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
+
+    // Fallback: if token carries an invalid ObjectId (e.g., legacy token), try resolving by email
+    if (!Types.ObjectId.isValid(userId)) {
+      if (!req.user?.email) {
+        throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+      }
+      const resolvedUser = await this.userService.getUserByEmail(
+        req.user.email
+      );
+      if (!resolvedUser) {
+        throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+      }
+      userId = resolvedUser._id.toString();
+    }
+
+    const searchFields = [
+      "contactName",
+      "firstName",
+      "lastName",
+      "email",
+      "phoneNumber",
+      "serviceType",
+      "status",
+    ];
+
+    const clientFilter: Record<string, any> = {
+      userId: new Types.ObjectId(userId),
+    };
+
+    if (req.query.page || req.query.limit) {
+      const paginateOptions = PaginationHelper.parsePaginationParams(req.query);
+      const filter = {
+        ...PaginationHelper.createSearchFilter(req.query, searchFields),
+        ...clientFilter,
+      };
+      const result = await this.quoteService.getPaginated(
+        filter,
+        paginateOptions
+      );
+      const response = PaginationHelper.formatResponse({
+        ...result,
+        data: result.data.map((quote) => this.quoteService.toResponse(quote)),
+      });
+
+      return ApiResponse.paginated(
+        res,
+        response.data,
+        response.pagination,
+        "Client quotes fetched successfully"
+      );
+    }
+
+    const filter = {
+      ...PaginationHelper.createSearchFilter(req.query, searchFields),
+      ...clientFilter,
+    };
+    const quotes = await this.quoteService.getAll(filter);
+    const data = quotes.map((quote) => this.quoteService.toResponse(quote));
+    ApiResponse.success(res, data, "Client quotes fetched successfully");
   });
 
   getQuoteById = asyncHandler(async (req: Request, res: Response) => {

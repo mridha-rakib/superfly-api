@@ -1,5 +1,5 @@
-import { ROLES } from "@/constants/app.constants";
 import upload from "@/config/multer.config";
+import { ROLES } from "@/constants/app.constants";
 import { authMiddleware } from "@/middlewares/auth.middleware";
 import { Router } from "express";
 import { CleaningReportController } from "./cleaning-report.controller";
@@ -15,28 +15,28 @@ router.post(
     { name: "beforePhotos", maxCount: 10 },
     { name: "afterPhotos", maxCount: 10 },
   ]),
-  controller.createReport
+  controller.createReport,
 );
 
 router.get(
   "/admin",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.listAdminReports
+  controller.listAdminReports,
 );
 
 router.get(
   "/:reportId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.getReportById
+  controller.getReportById,
 );
 
 router.patch(
   "/:reportId/approve",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  controller.approveReport
+  controller.approveReport,
 );
 
 export default router;

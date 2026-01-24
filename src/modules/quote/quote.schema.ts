@@ -79,10 +79,21 @@ export const assignQuoteCleanerSchema = z.object({
     .object({
       cleanerId: z.string().min(1).optional(),
       cleanerIds: z.array(z.string().min(1)).min(1).optional(),
+      cleanerSharePercentage: z.coerce.number().min(0).max(100).optional(),
     })
     .refine(
       (data) => Boolean(data.cleanerId || (data.cleanerIds && data.cleanerIds.length)),
       { message: "cleanerId or cleanerIds is required" }
+    )
+    .refine(
+      (data) =>
+        !data.cleanerIds ||
+        data.cleanerIds.length <= 1 ||
+        data.cleanerSharePercentage !== undefined,
+      {
+        message: "cleanerSharePercentage is required when assigning multiple cleaners",
+        path: ["cleanerSharePercentage"],
+      }
     ),
   params: z.object({
     quoteId: z.string().min(1),

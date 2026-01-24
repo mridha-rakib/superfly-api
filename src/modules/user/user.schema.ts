@@ -52,3 +52,23 @@ export const updateCleanerSchema = z.object({
       { message: "At least one field must be provided for update" }
     ),
 });
+
+export const updateProfileSchema = z.object({
+  body: z
+    .object({
+      fullName: z.string().trim().min(1).max(200).optional(),
+      email: z.string().email().optional(),
+      phoneNumber: z.string().trim().min(3).max(20).optional(),
+      address: z.string().trim().min(1).max(250).optional(),
+      profileImageUrl: z.string().url().max(500).optional(),
+    })
+    .refine(
+      (data) =>
+        data.fullName ||
+        data.email ||
+        data.phoneNumber ||
+        data.address ||
+        data.profileImageUrl,
+      { message: "At least one field must be provided for update" }
+    ),
+});

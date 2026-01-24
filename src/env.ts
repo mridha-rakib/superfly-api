@@ -16,7 +16,9 @@ const envSchema = z.object({
   SALT_ROUNDS: z.coerce.number().default(12),
 
   // Frontend URL
-  CLIENT_URL: z.url().default("http://localhost:3000"),
+  CLIENT_URL: z
+    .url()
+    .default("https://clinton-bottle-yacht-don.trycloudflare.com/"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),

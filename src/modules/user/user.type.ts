@@ -58,6 +58,8 @@ export type UpdateUserPayload = {
   phoneNumber?: string;
   phone?: string;
   address?: string;
+  email?: string;
+  profileImageUrl?: string;
 };
 
 export type ChangePasswordPayload = {

@@ -9,40 +9,45 @@ const router = Router();
 const userController = new UserController();
 
 router.get("/profile", authMiddleware.verifyToken, userController.getProfile);
+router.put(
+  "/profile",
+  authMiddleware.verifyToken,
+  userController.updateProfile,
+);
 
 router.post(
   "/cleaners",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  userController.createCleaner
+  userController.createCleaner,
 );
 
 router.get(
   "/cleaners",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  userController.listCleaners
+  userController.listCleaners,
 );
 
 router.get(
   "/cleaners/:cleanerId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  userController.getCleaner
+  userController.getCleaner,
 );
 
 router.put(
   "/cleaners/:cleanerId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  userController.updateCleaner
+  userController.updateCleaner,
 );
 
 router.delete(
   "/cleaners/:cleanerId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  userController.deleteCleaner
+  userController.deleteCleaner,
 );
 
 export default router;

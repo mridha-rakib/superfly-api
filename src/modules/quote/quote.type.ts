@@ -47,6 +47,7 @@ export type QuoteStatusUpdatePayload = {
 export type QuoteAssignCleanerPayload = {
   cleanerId?: string;
   cleanerIds?: string[];
+  cleanerSharePercentage?: number;
 };
 
 export type QuoteResponse = {

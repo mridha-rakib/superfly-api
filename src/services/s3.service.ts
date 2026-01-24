@@ -18,12 +18,15 @@ export class S3Service {
   private client: S3Client;
   private bucket: string;
   private region: string;
+  private endpoint?: string;
 
   constructor() {
     this.bucket = env.AWS_S3_BUCKET;
     this.region = env.AWS_REGION;
+    this.endpoint = env.AWS_S3_ENDPOINT?.replace(/\/+$/, "");
     this.client = new S3Client({
       region: this.region,
+      endpoint: this.endpoint,
       credentials: {
         accessKeyId: env.AWS_ACCESS_KEY,
         secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
@@ -69,6 +72,9 @@ export class S3Service {
   }
 
   private buildPublicUrl(key: string): string {
+    if (this.endpoint) {
+      return `${this.endpoint}/${key}`;
+    }
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
   }
 }

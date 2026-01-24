@@ -234,6 +234,13 @@ export class QuoteService {
     const draft =
       await this.paymentDraftRepository.findByPaymentIntentId(paymentIntentId);
 
+    // Idempotency guard: if a quote already exists for this payment intent, return it
+    const existingQuote =
+      await this.quoteRepository.findByPaymentIntentId(paymentIntentId);
+    if (existingQuote) {
+      return this.toResponse(existingQuote);
+    }
+
     if (!draft) {
       throw new NotFoundException("Payment draft not found");
     }
@@ -404,6 +411,16 @@ export class QuoteService {
 
     const paymentIntentId =
       paymentIntent?.id || this.resolveStripeId(session.payment_intent);
+
+    // Idempotency guard: if a quote already exists for this payment intent, return it
+    if (paymentIntentId) {
+      const existing = await this.quoteRepository.findByPaymentIntentId(
+        paymentIntentId,
+      );
+      if (existing) {
+        return this.toResponse(existing);
+      }
+    }
 
     const quote = await this.quoteRepository.create({
       userId: draft.userId,
@@ -658,29 +675,34 @@ export class QuoteService {
     );
 
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
-    if (
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL &&
-      cleaners.length > 1
-    ) {
-      throw new BadRequestException(
-        "Residential quotes allow only one cleaner",
-      );
-    }
-
     const primaryCleaner = cleaners[0];
 
+    let cleanerSharePercentage: number | undefined =
+      payload.cleanerSharePercentage;
     if (
-      primaryCleaner.cleanerPercentage === undefined ||
-      primaryCleaner.cleanerPercentage === null
+      cleanerSharePercentage === undefined ||
+      cleanerSharePercentage === null
     ) {
-      throw new BadRequestException("Cleaner percentage is not configured");
+      cleanerSharePercentage = primaryCleaner.cleanerPercentage;
+    }
+
+    if (
+      cleanerSharePercentage === undefined ||
+      cleanerSharePercentage === null ||
+      Number.isNaN(cleanerSharePercentage)
+    ) {
+      throw new BadRequestException("Cleaner share percentage is not configured");
+    }
+
+    if (cleanerSharePercentage < 0 || cleanerSharePercentage > 100) {
+      throw new BadRequestException("Cleaner share percentage must be between 0 and 100");
     }
 
     const updated = await this.quoteRepository.updateById(quoteId, {
       assignedCleanerId: primaryCleaner._id,
       assignedCleanerIds: cleaners.map((c) => c._id),
       assignedCleanerAt: new Date(),
-      cleanerPercentage: primaryCleaner.cleanerPercentage,
+      cleanerPercentage: cleanerSharePercentage,
     });
 
     if (!updated) {

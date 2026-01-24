@@ -11,6 +11,7 @@ import {
   createCleanerSchema,
   listCleanersSchema,
   updateCleanerSchema,
+  updateProfileSchema,
 } from "./user.schema";
 import { UserService } from "./user.service";
 
@@ -47,6 +48,21 @@ export class UserController {
     }
     const profile = await this.userService.getProfile(userId);
     ApiResponse.success(res, profile, "Profile fetched successfully");
+  });
+
+  updateProfile = asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
+
+    const validated = await zParse(updateProfileSchema, req);
+    const profile = await this.userService.updateProfile(
+      userId,
+      validated.body
+    );
+
+    ApiResponse.success(res, profile, "Profile updated successfully");
   });
 
   createCleaner = asyncHandler(async (req: Request, res: Response) => {

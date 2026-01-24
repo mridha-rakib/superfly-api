@@ -78,6 +78,13 @@ router.get(
   quoteController.getCleanerEarnings
 );
 
+router.get(
+  "/client",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.CLIENT),
+  quoteController.listClientQuotes
+);
+
 router.patch(
   "/:quoteId/arrived",
   authMiddleware.verifyToken,

@@ -63,10 +63,12 @@ export class CleaningReportService {
       );
     }
 
-    if (
-      !quote.assignedCleanerId ||
-      quote.assignedCleanerId.toString() !== cleanerId
-    ) {
+    const assignedIds = [
+      quote.assignedCleanerId?.toString(),
+      ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
+    ].filter(Boolean);
+
+    if (!assignedIds.includes(cleanerId)) {
       throw new ForbiddenException("Cleaner is not assigned to this quote");
     }
 
@@ -328,15 +330,26 @@ export class CleaningReportService {
       return quote.cleanerPercentage;
     }
 
-    if (!quote.assignedCleanerId) {
-      return 0;
-    }
+    const assigned = [
+      quote.assignedCleanerId,
+      ...(quote.assignedCleanerIds || []),
+    ].filter(Boolean);
 
-    const cleaner = await this.userService.getById(
-      quote.assignedCleanerId.toString()
-    );
+    const assignedCount = assigned.length || 1;
 
-    return cleaner?.cleanerPercentage ?? 0;
+    // Prefer quote-level share; fallback to primary cleaner's configured percentage.
+    const primaryId = assigned[0];
+    const cleaner = primaryId
+      ? await this.userService.getById(primaryId.toString())
+      : null;
+
+    const totalShare =
+      quote.cleanerPercentage !== undefined && quote.cleanerPercentage !== null
+        ? quote.cleanerPercentage
+        : cleaner?.cleanerPercentage ?? 0;
+
+    // Per-cleaner share (even split across assigned cleaners)
+    return assignedCount > 0 ? totalShare / assignedCount : totalShare;
   }
 
   private resolveQuoteTotal(quote: IQuote): number {

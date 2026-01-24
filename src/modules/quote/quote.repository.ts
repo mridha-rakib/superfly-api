@@ -62,4 +62,8 @@ export class QuoteRepository extends BaseRepository<IQuote> {
       count: results[0].count || 0,
     };
   }
+
+  async findByPaymentIntentId(paymentIntentId: string): Promise<IQuote | null> {
+    return this.model.findOne({ paymentIntentId }).exec();
+  }
 }

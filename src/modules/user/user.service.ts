@@ -330,4 +330,52 @@ export class UserService {
 
     return this.toUserResponse(user);
   }
+
+  async updateProfile(
+    userId: string,
+    payload: {
+      fullName?: string;
+      email?: string;
+      phoneNumber?: string;
+      address?: string;
+      profileImageUrl?: string;
+    }
+  ): Promise<UserResponse> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException(MESSAGES.USER.USER_NOT_FOUND);
+    }
+
+    if (payload.email) {
+      const newEmail = payload.email.toLowerCase();
+      if (newEmail !== user.email) {
+        const existing = await this.userRepository.findByEmail(newEmail);
+        if (existing && existing._id.toString() !== userId) {
+          throw new ConflictException(MESSAGES.AUTH.EMAIL_ALREADY_EXISTS);
+        }
+        user.email = newEmail;
+        // Optional: mark as unverified on email change
+        user.emailVerified = false;
+      }
+    }
+
+    if (payload.fullName) {
+      user.fullName = payload.fullName.trim();
+    }
+
+    if (payload.phoneNumber !== undefined) {
+      user.phoneNumber = payload.phoneNumber;
+    }
+
+    if (payload.address !== undefined) {
+      user.address = payload.address;
+    }
+
+    if (payload.profileImageUrl !== undefined) {
+      user.profileImageUrl = payload.profileImageUrl || null;
+    }
+
+    await user.save();
+    return this.toUserResponse(user);
+  }
 }
