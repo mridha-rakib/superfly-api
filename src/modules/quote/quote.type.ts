@@ -38,6 +38,11 @@ export type QuoteRequestPayload = {
   preferredDate: string;
   preferredTime: string;
   specialRequest: string;
+  totalPrice?: number;
+  cleanerPrice?: number;
+  squareFoot?: number;
+  cleaningFrequency?: string;
+  assignedCleanerIds?: string[];
 };
 
 export type QuoteStatusUpdatePayload = {
@@ -73,16 +78,25 @@ export type QuoteResponse = {
   currency?: string;
   paymentIntentId?: string;
   paymentAmount?: number;
-  paymentStatus?: "paid";
+  paymentStatus?: "pending" | "paid" | "failed" | "unpaid" | "completed" | "manual";
   paidAt?: Date;
   adminNotifiedAt?: Date;
   assignedCleanerId?: string;
   assignedCleanerIds?: string[];
+  assignedCleaners?: Array<{
+    _id: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+  }>;
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
+  cleanerSharePercentage?: number;
   cleanerPercentage?: number;
   cleanerEarningAmount?: number;
+  squareFoot?: number;
+  cleaningFrequency?: string;
   createdAt: Date;
   updatedAt: Date;
 };

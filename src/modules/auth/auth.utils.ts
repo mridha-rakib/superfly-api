@@ -4,14 +4,15 @@ import { env } from "@/env";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import type { JWTPayload } from "../user/user.type";
+import type { SignOptions, Secret } from "jsonwebtoken";
 
 
 
 export class AuthUtil {
   static generateAccessToken(payload: JWTPayload): string {
-    return jwt.sign(payload, env.JWT_SECRET, {
+    return jwt.sign(payload, env.JWT_SECRET as Secret, {
       expiresIn: env.JWT_EXPIRY || AUTH.ACCESS_TOKEN_EXPIRY,
-    });
+    } as SignOptions);
   }
 
   /**
@@ -19,9 +20,9 @@ export class AuthUtil {
 Generate Refresh Token
 */
   static generateRefreshToken(userId: string): string {
-    return jwt.sign({ userId }, env.JWT_REFRESH_SECRET, {
+    return jwt.sign({ userId }, env.JWT_REFRESH_SECRET as Secret, {
       expiresIn: env.JWT_REFRESH_EXPIRY || AUTH.REFRESH_TOKEN_EXPIRY,
-    });
+    } as SignOptions);
   }
 
   /**
@@ -30,7 +31,7 @@ Verify Access Token
 */
   static verifyAccessToken(token: string): JWTPayload {
     try {
-      const decoded = jwt.verify(token, env.JWT_SECRET);
+      const decoded = jwt.verify(token, env.JWT_SECRET as Secret);
       return decoded as JWTPayload;
     } catch (error) {
       throw new Error("Invalid or expired access token");
@@ -43,7 +44,7 @@ Verify Refresh Token
 */
   static verifyRefreshToken(token: string): JWTPayload {
     try {
-      const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET);
+      const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET as Secret);
       return decoded as JWTPayload;
     } catch (error) {
       throw new Error("Invalid or expired refresh token");

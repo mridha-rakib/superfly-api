@@ -67,6 +67,14 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     type: String,
     trim: true,
   },
+  squareFoot: {
+    type: Number,
+    min: 0,
+  },
+  cleaningFrequency: {
+    type: String,
+    trim: true,
+  },
   services: [
     {
       key: { type: String, required: true },
@@ -126,6 +134,11 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     index: true,
   },
   cleanerPercentage: {
+    type: Number,
+    min: 0,
+    max: 100,
+  },
+  cleanerSharePercentage: {
     type: Number,
     min: 0,
     max: 100,

@@ -10,6 +10,7 @@ import {
 } from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
 import { EmailService } from "@/services/email.service";
+import { s3Service, type StorageUploadInput } from "@/services/s3.service";
 import {
   BadRequestException,
   ConflictException,
@@ -57,6 +58,33 @@ export class UserService {
     return this.toUserResponse(user);
   }
 
+  async updateProfilePhoto(
+    userId: string,
+    file: StorageUploadInput,
+  ): Promise<UserResponse> {
+    if (!file || !file.buffer) {
+      throw new BadRequestException("Profile photo file is required");
+    }
+
+    if (!file.mimeType?.startsWith("image/")) {
+      throw new BadRequestException("Profile photo must be an image");
+    }
+
+    const upload = await s3Service.uploadFile(file, {
+      prefix: `profiles/${userId}`,
+    });
+
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    user.profileImageUrl = upload.url;
+    await user.save();
+
+    return this.toUserResponse(user);
+  }
+
   async listCleaners(query: PaginationQuery) {
     const page = query.page ? Number(query.page) : PAGINATION.DEFAULT_PAGE;
     const limit = query.limit ? Number(query.limit) : PAGINATION.DEFAULT_LIMIT;
@@ -86,7 +114,7 @@ export class UserService {
 
     return {
       data: (result.data || []).map((user) => this.toUserResponse(user as any)),
-      pagination: result.pagination || {
+      pagination: {
         currentPage: result.currentPage,
         totalPages: result.pageCount,
         totalItems: result.totalItems,
@@ -112,6 +140,18 @@ export class UserService {
     }
 
     return this.toUserResponse(cleaner);
+  }
+
+  async getUsersByIds(ids: string[]): Promise<UserResponse[]> {
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean))).map(String);
+    if (!uniqueIds.length) return [];
+
+    const users = await this.userRepository.find({
+      _id: { $in: uniqueIds },
+      isDeleted: { $ne: true },
+    });
+
+    return users.map((user) => this.toUserResponse(user as any));
   }
 
   async createUser(payload: UserCreatePayload): Promise<IUser> {

@@ -9,87 +9,94 @@ const quoteController = new QuoteController();
 router.post(
   "/intent",
   authMiddleware.optionalAuth,
-  quoteController.createPaymentIntent
+  quoteController.createPaymentIntent,
 );
 
 router.post(
   "/confirm",
   authMiddleware.optionalAuth,
-  quoteController.confirmPayment
+  quoteController.confirmPayment,
 );
 
 router.get(
   "/payment-status",
   authMiddleware.optionalAuth,
-  quoteController.getPaymentStatus
+  quoteController.getPaymentStatus,
 );
 
 router.post(
   "/commercial",
   authMiddleware.optionalAuth,
-  quoteController.createCommercialRequest
+  quoteController.createCommercialRequest,
 );
 
 router.post(
   "/post-construction",
   authMiddleware.optionalAuth,
-  quoteController.createPostConstructionRequest
+  quoteController.createPostConstructionRequest,
+);
+
+router.post(
+  "/admin/service-request",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.createAdminServiceRequest,
 );
 
 router.get(
   "/admin",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  quoteController.listAdminQuotes
+  quoteController.listAdminQuotes,
 );
 
 router.patch(
   "/:quoteId/status",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  quoteController.updateStatus
+  quoteController.updateStatus,
 );
 
 router.patch(
   "/:quoteId/assign-cleaner",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  quoteController.assignCleaner
+  quoteController.assignCleaner,
 );
 
 router.delete(
   "/:quoteId",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
-  quoteController.deleteQuote
+  quoteController.deleteQuote,
 );
 
 router.get(
   "/cleaner/assigned",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.CLEANER),
-  quoteController.listCleanerAssignedQuotes
+  quoteController.listCleanerAssignedQuotes,
 );
 
 router.get(
   "/cleaner/earnings",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.CLEANER),
-  quoteController.getCleanerEarnings
+  quoteController.getCleanerEarnings,
 );
 
 router.get(
   "/client",
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.CLIENT),
-  quoteController.listClientQuotes
+  quoteController.listClientQuotes,
 );
 
 router.patch(
   "/:quoteId/arrived",
   authMiddleware.verifyToken,
-  authMiddleware.authorize(ROLES.CLIENT),
-  quoteController.markArrived
+  authMiddleware.authorize(ROLES.CLEANER),
+  quoteController.markArrived,
 );
 
 router.get(
@@ -99,9 +106,9 @@ router.get(
     ROLES.ADMIN,
     ROLES.SUPER_ADMIN,
     ROLES.CLEANER,
-    ROLES.CLIENT
+    ROLES.CLIENT,
   ),
-  quoteController.getQuoteById
+  quoteController.getQuoteById,
 );
 
 export default router;

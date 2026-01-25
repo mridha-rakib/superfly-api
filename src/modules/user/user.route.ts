@@ -1,5 +1,6 @@
 // file: src/modules/user/user.route.ts
 
+import upload from "@/config/multer.config";
 import { ROLES } from "@/constants/app.constants";
 import { authMiddleware } from "@/middlewares/auth.middleware";
 import { Router } from "express";
@@ -13,6 +14,19 @@ router.put(
   "/profile",
   authMiddleware.verifyToken,
   userController.updateProfile,
+);
+
+router.post(
+  "/profile/photo",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(
+    ROLES.ADMIN,
+    ROLES.SUPER_ADMIN,
+    ROLES.CLIENT,
+    ROLES.CLEANER,
+  ),
+  upload.single("photo"),
+  userController.uploadProfilePhoto,
 );
 
 router.post(

@@ -43,12 +43,14 @@ export interface IQuote extends Document {
   serviceDate: string;
   preferredTime?: string;
   notes?: string;
+  squareFoot?: number;
+  cleaningFrequency?: string;
   services?: IQuoteServiceItem[];
   totalPrice?: number;
   currency?: string;
   paymentIntentId?: string;
   paymentAmount?: number;
-  paymentStatus?: "paid";
+  paymentStatus?: "pending" | "paid" | "failed" | "unpaid" | "completed" | "manual";
   paidAt?: Date;
   adminNotifiedAt?: Date;
   assignedCleanerIds?: Array<Types.ObjectId | string>;
@@ -56,8 +58,15 @@ export interface IQuote extends Document {
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
+  /**
+   * Total percentage of the quote amount that should be shared across all assigned cleaners.
+   * The per-cleaner share is derived from this value divided by the number of cleaners.
+   */
+  cleanerSharePercentage?: number;
   cleanerPercentage?: number;
   cleanerEarningAmount?: number;
+  isDeleted?: boolean;
+  deletedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -28,25 +28,7 @@ export class QuoteRepository extends BaseRepository<IQuote> {
         {
           $group: {
             _id: null,
-            total: {
-              $sum: {
-                $cond: [
-                  { $ifNull: ["$assignedCleanerIds", false] },
-                  {
-                    $divide: [
-                      { $ifNull: ["$cleanerEarningAmount", 0] },
-                      {
-                        $max: [
-                          { $size: { $ifNull: ["$assignedCleanerIds", []] } },
-                          1,
-                        ],
-                      },
-                    ],
-                  },
-                  { $ifNull: ["$cleanerEarningAmount", 0] },
-                ],
-              },
-            },
+            total: { $sum: { $ifNull: ["$cleanerEarningAmount", 0] } },
             count: { $sum: 1 },
           },
         },

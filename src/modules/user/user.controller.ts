@@ -2,10 +2,14 @@
 
 import { MESSAGES } from "@/constants/app.constants";
 import { asyncHandler } from "@/middlewares/async-handler.middleware";
-import { UnauthorizedException } from "@/utils/app-error.utils";
+import {
+  BadRequestException,
+  UnauthorizedException,
+} from "@/utils/app-error.utils";
 import { ApiResponse } from "@/utils/response.utils";
 import { zParse } from "@/utils/validators.utils";
 import type { Request, Response } from "express";
+import type { StorageUploadInput } from "@/services/s3.service";
 import {
   cleanerIdSchema,
   createCleanerSchema,
@@ -63,6 +67,31 @@ export class UserController {
     );
 
     ApiResponse.success(res, profile, "Profile updated successfully");
+  });
+
+  uploadProfilePhoto = asyncHandler(async (req: Request, res: Response) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
+    }
+
+    const file = req.file;
+    if (!file) {
+      throw new BadRequestException("Profile photo file is required");
+    }
+
+    const uploadInput: StorageUploadInput = {
+      buffer: file.buffer,
+      mimeType: file.mimetype,
+      originalName: file.originalname,
+    };
+
+    const profile = await this.userService.updateProfilePhoto(
+      userId,
+      uploadInput,
+    );
+
+    ApiResponse.success(res, profile, "Profile photo updated successfully");
   });
 
   createCleaner = asyncHandler(async (req: Request, res: Response) => {

@@ -13,6 +13,7 @@ import {
   createQuoteGuestSchema,
   createServiceRequestAuthSchema,
   createServiceRequestGuestSchema,
+  createServiceRequestAdminSchema,
   quoteDetailSchema,
   quotePaymentStatusSchema,
   updateQuoteStatusSchema,
@@ -92,6 +93,19 @@ export class QuoteController {
           ...validated.body,
           serviceType: QUOTE.SERVICE_TYPES.POST_CONSTRUCTION,
         },
+        req.user?.userId
+      );
+
+      ApiResponse.created(res, quote, "Quote request submitted successfully");
+    }
+  );
+
+  createAdminServiceRequest = asyncHandler(
+    async (req: Request, res: Response) => {
+      const validated = await zParse(createServiceRequestAdminSchema, req);
+
+      const quote = await this.quoteService.createServiceRequest(
+        validated.body,
         req.user?.userId
       );
 
@@ -289,15 +303,16 @@ export class QuoteController {
 
   markArrived = asyncHandler(async (req: Request, res: Response) => {
     const userId = req.user?.userId;
+    const role = req.user?.role;
     if (!userId) {
       throw new UnauthorizedException(MESSAGES.AUTH.UNAUTHORIZED_ACCESS);
     }
 
     const validated = await zParse(quoteDetailSchema, req);
-    const quote = await this.quoteService.markArrived(
-      validated.params.quoteId,
-      userId
-    );
+    const quote = await this.quoteService.markArrived(validated.params.quoteId, {
+      userId,
+      role: role || "",
+    });
 
     ApiResponse.success(res, quote, "Cleaning status updated successfully");
   });

@@ -46,7 +46,7 @@ export class EmailVerificationService {
     OTP_LENGTH: 4,
   };
   constructor(
-    config?: Partial<typeof EmailVerificationService.prototype.config>
+    config?: Partial<typeof EmailVerificationService.prototype.config>,
   ) {
     this.repository = new EmailVerificationOTPRepository();
     this.emailService = new EmailService();
@@ -91,7 +91,7 @@ export class EmailVerificationService {
 
     // Step 4: Calculate expiration time
     const expiresAt = new Date(
-      Date.now() + this.config.OTP_EXPIRY_MINUTES * 60 * 1000
+      Date.now() + this.config.OTP_EXPIRY_MINUTES * 60 * 1000,
     );
 
     // Step 5: Save OTP to database
@@ -112,8 +112,8 @@ export class EmailVerificationService {
     // Step 6: Send verification email
     await this.emailService.sendEmailVerification({
       to: request.email,
-      userName: request.userName,
-      userType: request.userType,
+      userName: request.userName || "",
+      userType: request.userType || "",
       verificationCode: String(otpGenerated.code),
       expiresIn: String(this.config.OTP_EXPIRY_MINUTES),
     });
@@ -125,7 +125,7 @@ export class EmailVerificationService {
         userType: request.userType,
         expiresAt: otpGenerated.expiresAt,
       },
-      "Email verification OTP created and sent successfully"
+      "Email verification OTP created and sent successfully",
     );
 
     return {
@@ -154,7 +154,7 @@ export class EmailVerificationService {
     // Step 2: Check max attempts
     if (record.attempts >= this.config.MAX_OTP_ATTEMPTS) {
       throw new BadRequestException(
-        "Maximum verification attempts exceeded. Please request a new code."
+        "Maximum verification attempts exceeded. Please request a new code.",
       );
     }
 
@@ -162,7 +162,7 @@ export class EmailVerificationService {
     const isValidCode = await this.validateOTPCode(
       request.code,
       record.code,
-      record.expiresAt
+      record.expiresAt,
     );
 
     if (!isValidCode) {
@@ -175,7 +175,7 @@ export class EmailVerificationService {
           attempts: record.attempts + 1,
           userType: record.userType,
         },
-        "OTP verification failed - invalid code"
+        "OTP verification failed - invalid code",
       );
 
       throw new BadRequestException("Invalid verification code");
@@ -190,7 +190,7 @@ export class EmailVerificationService {
         email: request.email,
         userType: record.userType,
       },
-      "Email verified successfully"
+      "Email verified successfully",
     );
 
     return {
@@ -210,19 +210,19 @@ export class EmailVerificationService {
     // Step 1: Find existing OTP
     let existingOTP = await this.repository.findByEmail(
       request.email,
-      request.userType
+      request.userType,
     );
 
     if (!existingOTP) {
       existingOTP = await this.repository.findByEmailIgnoreExpiry(
         request.email,
-        request.userType
+        request.userType,
       );
     }
 
     if (!existingOTP) {
       throw new NotFoundException(
-        "No pending verification found. Please register again."
+        "No pending verification found. Please register again.",
       );
     }
 
@@ -236,7 +236,7 @@ export class EmailVerificationService {
     if (!eligibility.canResend) {
       throw new BadRequestException(
         eligibility.reason ||
-          "Too many resend attempts. Please try again later."
+          "Too many resend attempts. Please try again later.",
       );
     }
 
@@ -245,7 +245,7 @@ export class EmailVerificationService {
 
     // Step 5: Generate new OTP
     const newOTPGenerated = this.otpService.generate(
-      "EMAIL_VERIFICATION_RESEND"
+      "EMAIL_VERIFICATION_RESEND",
     );
 
     // Step 6: Save new OTP to database
@@ -265,8 +265,8 @@ export class EmailVerificationService {
 
     await this.emailService.resendEmailVerification({
       to: request.email,
-      userName: request.userName,
-      userType: request.userType,
+      userName: request.userName || "",
+      userType: request.userType || "",
       verificationCode: String(newOTPGenerated.code),
       expiresIn: String(expiresInMinutes),
     });
@@ -278,7 +278,7 @@ export class EmailVerificationService {
         userType: request.userType,
         resendCount: eligibility.attemptsRemaining,
       },
-      "Email verification OTP resent successfully"
+      "Email verification OTP resent successfully",
     );
 
     return {
@@ -295,7 +295,7 @@ export class EmailVerificationService {
    * @returns Eligibility status with cooldown info
    */
   private async checkResendEligibility(
-    otpRecord: IEmailVerificationOTP
+    otpRecord: IEmailVerificationOTP,
   ): Promise<IResendEligibility> {
     const now = new Date();
 
@@ -306,7 +306,7 @@ export class EmailVerificationService {
 
       if (secondsSinceLastAttempt < this.config.MIN_RESEND_INTERVAL_SECONDS) {
         const waitSeconds = Math.ceil(
-          this.config.MIN_RESEND_INTERVAL_SECONDS - secondsSinceLastAttempt
+          this.config.MIN_RESEND_INTERVAL_SECONDS - secondsSinceLastAttempt,
         );
 
         return {
@@ -321,7 +321,7 @@ export class EmailVerificationService {
     // ✅ FIX: Use repository's query instead of direct model access
     const resendCount = await this.repository.countResendAttemptsLastHour(
       otpRecord.userId,
-      otpRecord.email
+      otpRecord.email,
     );
 
     if (resendCount >= this.config.MAX_RESENDS_PER_HOUR) {
@@ -355,7 +355,7 @@ export class EmailVerificationService {
   private async validateOTPCode(
     providedCode: string,
     storedCode: string,
-    expiresAt: Date
+    expiresAt: Date,
   ): Promise<boolean> {
     // Check 1: Has expired
     if (new Date() > expiresAt) {
@@ -392,7 +392,7 @@ export class EmailVerificationService {
     }
 
     const expiresInMinutes = Math.ceil(
-      (record.expiresAt.getTime() - new Date().getTime()) / 60000
+      (record.expiresAt.getTime() - new Date().getTime()) / 60000,
     );
 
     return {

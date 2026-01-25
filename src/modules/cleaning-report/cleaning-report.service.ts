@@ -126,7 +126,7 @@ export class CleaningReportService {
       reportStatus: QUOTE.REPORT_STATUSES.PENDING,
     });
 
-    return this.toResponse(report);
+    return this.toResponse(report as ReportDetails);
   }
 
   async getPaginated(
@@ -196,11 +196,20 @@ export class CleaningReportService {
       );
     }
 
-    const cleanerPercentage = await this.resolveCleanerPercentage(quote);
+    const {
+      sharePercentage,
+      perCleanerPercentage,
+      cleanerCount,
+    } = await this.resolveCleanerSplit(quote);
     const totalAmount = this.resolveQuoteTotal(quote);
     const cleanerEarningAmount =
       totalAmount > 0
-        ? Number(((totalAmount * cleanerPercentage) / 100).toFixed(2))
+        ? Number(
+            (
+              (totalAmount * sharePercentage) /
+              (100 * Math.max(cleanerCount, 1))
+            ).toFixed(2)
+          )
         : 0;
 
     await this.quoteRepository.updateById(quote._id.toString(), {
@@ -209,7 +218,8 @@ export class CleaningReportService {
       status: QUOTE.STATUSES.COMPLETED,
       paymentStatus: quote.paymentStatus || "paid",
       paidAt: quote.paidAt || new Date(),
-      cleanerPercentage,
+      cleanerSharePercentage: sharePercentage,
+      cleanerPercentage: perCleanerPercentage,
       cleanerEarningAmount,
     });
 
@@ -322,34 +332,49 @@ export class CleaningReportService {
     return String(value);
   }
 
-  private async resolveCleanerPercentage(quote: IQuote): Promise<number> {
-    if (
-      quote.cleanerPercentage !== undefined &&
-      quote.cleanerPercentage !== null
-    ) {
-      return quote.cleanerPercentage;
-    }
-
+  private async resolveCleanerSplit(
+    quote: IQuote
+  ): Promise<{
+    sharePercentage: number;
+    perCleanerPercentage: number;
+    cleanerCount: number;
+  }> {
     const assigned = [
       quote.assignedCleanerId,
       ...(quote.assignedCleanerIds || []),
-    ].filter(Boolean);
+    ]
+      .map((id) => (id ? id.toString() : undefined))
+      .filter(Boolean) as string[];
 
-    const assignedCount = assigned.length || 1;
+    const uniqueAssigned = Array.from(new Set(assigned));
+    const cleanerCount = uniqueAssigned.length || 1;
 
-    // Prefer quote-level share; fallback to primary cleaner's configured percentage.
-    const primaryId = assigned[0];
+    // Prefer explicit quote-level share; fallback to primary cleaner's configured percentage.
+    const primaryId = uniqueAssigned[0];
     const cleaner = primaryId
       ? await this.userService.getById(primaryId.toString())
       : null;
 
-    const totalShare =
-      quote.cleanerPercentage !== undefined && quote.cleanerPercentage !== null
-        ? quote.cleanerPercentage
-        : cleaner?.cleanerPercentage ?? 0;
+    const sharePercentage =
+      quote.cleanerSharePercentage ??
+      quote.cleanerPercentage ??
+      cleaner?.cleanerPercentage ??
+      0;
 
-    // Per-cleaner share (even split across assigned cleaners)
-    return assignedCount > 0 ? totalShare / assignedCount : totalShare;
+    const normalizedShare = Number.isFinite(sharePercentage)
+      ? Number(sharePercentage)
+      : 0;
+
+    const perCleanerPercentage =
+      cleanerCount > 0
+        ? Number((normalizedShare / cleanerCount).toFixed(4))
+        : normalizedShare;
+
+    return {
+      sharePercentage: normalizedShare,
+      perCleanerPercentage,
+      cleanerCount,
+    };
   }
 
   private resolveQuoteTotal(quote: IQuote): number {

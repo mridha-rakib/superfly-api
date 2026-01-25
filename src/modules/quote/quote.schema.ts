@@ -25,8 +25,22 @@ const baseServiceRequestSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Preferred date must be YYYY-MM-DD"),
   preferredTime: z.string().trim().min(1).max(60),
   specialRequest: z.string().trim().min(1).max(500),
+  totalPrice: z.coerce.number().min(0).optional(),
+  cleanerPrice: z.coerce.number().min(0).optional(),
+  squareFoot: z.coerce.number().min(0).optional(),
+  cleaningFrequency: z.string().trim().max(100).optional(),
+  assignedCleanerIds: z.array(z.string().trim().min(1)).optional(),
 });
 
+export const createAdminServiceRequestSchema = z.object({
+  body: baseServiceRequestSchema.extend({
+    serviceType: z.enum(["commercial", "post_construction"]),
+    name: z.string().trim().min(1).max(200).optional(),
+    email: z.string().email("Invalid email format").optional(),
+    phoneNumber: z.string().trim().min(6).max(20).optional(),
+    specialRequest: z.string().trim().min(1).max(500).optional(),
+  }),
+});
 export const createQuoteGuestSchema = z.object({
   body: baseQuoteSchema.extend({
     firstName: z.string().min(1).max(100),
@@ -58,6 +72,18 @@ export const createServiceRequestAuthSchema = z.object({
     name: z.string().trim().min(1).max(200).optional(),
     email: z.string().email("Invalid email format").optional(),
     phoneNumber: z.string().trim().min(6).max(20).optional(),
+  }),
+});
+
+export const createServiceRequestAdminSchema = z.object({
+  body: baseServiceRequestSchema.extend({
+    serviceType: z.enum([
+      QUOTE.SERVICE_TYPES.COMMERCIAL,
+      QUOTE.SERVICE_TYPES.POST_CONSTRUCTION,
+    ]),
+    name: z.string().trim().min(1).max(200),
+    email: z.string().email("Invalid email format"),
+    phoneNumber: z.string().trim().min(6).max(20),
   }),
 });
 

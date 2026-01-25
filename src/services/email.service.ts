@@ -4,8 +4,8 @@ import { EMAIL_CONFIG, EMAIL_ENABLED } from "@/config/email.config";
 import { APP } from "@/constants/app.constants";
 import { env } from "@/env";
 import { logger } from "@/middlewares/pino-logger";
-import * as postmark from "postmark";
 import nodemailer, { type Transporter } from "nodemailer";
+import * as postmark from "postmark";
 
 type BasicEmailPayload = {
   to: string;
@@ -80,7 +80,7 @@ export class EmailService {
     if (this.enabled) {
       if (this.provider === "postmark") {
         this.postmarkClient = new postmark.ServerClient(
-          EMAIL_CONFIG.postmark.apiToken
+          EMAIL_CONFIG.postmark.apiToken,
         );
       } else if (this.provider === "smtp") {
         this.transporter = nodemailer.createTransport({
@@ -93,13 +93,15 @@ export class EmailService {
     }
   }
 
-  async sendEmailVerification(payload: VerificationEmailPayload): Promise<void> {
+  async sendEmailVerification(
+    payload: VerificationEmailPayload,
+  ): Promise<void> {
     const subject = `${APP.NAME} email verification`;
     const html = this.buildVerificationTemplate(
       payload.userName,
       payload.userType,
       payload.verificationCode,
-      payload.expiresIn
+      payload.expiresIn,
     );
 
     await this.send({
@@ -110,13 +112,15 @@ export class EmailService {
     });
   }
 
-  async resendEmailVerification(payload: VerificationEmailPayload): Promise<void> {
+  async resendEmailVerification(
+    payload: VerificationEmailPayload,
+  ): Promise<void> {
     const subject = `${APP.NAME} verification code`;
     const html = this.buildVerificationTemplate(
       payload.userName,
       payload.userType,
       payload.verificationCode,
-      payload.expiresIn
+      payload.expiresIn,
     );
 
     await this.send({
@@ -148,7 +152,7 @@ export class EmailService {
     userName: string | undefined,
     to: string,
     otp: string,
-    expiresInMinutes: number
+    expiresInMinutes: number,
   ): Promise<void> {
     const subject = `${APP.NAME} password reset code`;
     const html = this.wrapTemplate(`
@@ -168,7 +172,7 @@ export class EmailService {
 
   async sendPasswordResetConfirmation(
     userName: string,
-    to: string
+    to: string,
   ): Promise<void> {
     const subject = `${APP.NAME} password reset confirmation`;
     const html = this.wrapTemplate(`
@@ -186,7 +190,7 @@ export class EmailService {
   }
 
   async sendPasswordChangeNotification(
-    payload: PasswordChangePayload
+    payload: PasswordChangePayload,
   ): Promise<void> {
     const subject = `${APP.NAME} password changed`;
     const html = this.wrapTemplate(`
@@ -204,7 +208,7 @@ export class EmailService {
   }
 
   async sendAccountCredentials(
-    payload: AccountCredentialsPayload
+    payload: AccountCredentialsPayload,
   ): Promise<void> {
     const loginLink = payload.loginLink || `${env.CLIENT_URL}/login`;
     const subject = `${APP.NAME} account credentials`;
@@ -212,7 +216,7 @@ export class EmailService {
       <p>Hi ${this.safeText(payload.userName)},</p>
       <p>Your ${this.safeText(payload.userType)} account has been created.</p>
       <p>Temporary password: <strong>${this.safeText(
-        payload.password
+        payload.password,
       )}</strong></p>
       <p>Please log in and change your password right away:</p>
       <p><a href="${loginLink}">${loginLink}</a></p>
@@ -234,7 +238,7 @@ export class EmailService {
 
       logger.warn(
         { to: payload.to, subject: payload.subject },
-        "Email delivery skipped (not configured)"
+        "Email delivery skipped (not configured)",
       );
       return;
     }
@@ -246,12 +250,12 @@ export class EmailService {
     userName: string,
     userType: string,
     code: string,
-    expiresIn: string
+    expiresIn: string,
   ): string {
     return this.wrapTemplate(`
       <p>Hi ${this.safeText(userName)},</p>
       <p>Use the code below to verify your ${this.safeText(
-        userType
+        userType,
       )} account:</p>
       <p><strong>${code}</strong></p>
       <p>This code expires in ${expiresIn} minutes.</p>
@@ -261,7 +265,7 @@ export class EmailService {
   private wrapTemplate(content: string): string {
     const logoMarkup = this.logoUrl
       ? `<img src="${this.logoUrl}" alt="${this.safeText(
-          APP.NAME
+          APP.NAME,
         )}" style="max-width: 160px; height: auto; margin-bottom: 16px;" />`
       : `<h2 style="margin: 0 0 16px;">${this.safeText(APP.NAME)}</h2>`;
 
@@ -293,7 +297,10 @@ export class EmailService {
   }
 
   private stripHtml(html: string): string {
-    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    return html
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   private async sendPostmark(payload: BasicEmailPayload): Promise<void> {
@@ -362,7 +369,7 @@ export class EmailService {
 
   private async sendWithRetry(
     operation: () => Promise<void>,
-    payload: BasicEmailPayload
+    payload: BasicEmailPayload,
   ): Promise<void> {
     const attempts = Math.max(0, this.maxRetries) + 1;
 
@@ -377,7 +384,7 @@ export class EmailService {
 
         logger.warn(
           { error, to: payload.to, subject: payload.subject, attempt },
-          "Email send attempt failed"
+          "Email send attempt failed",
         );
 
         if (this.retryDelayMs > 0) {

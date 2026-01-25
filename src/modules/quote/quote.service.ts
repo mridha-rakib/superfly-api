@@ -414,9 +414,8 @@ export class QuoteService {
 
     // Idempotency guard: if a quote already exists for this payment intent, return it
     if (paymentIntentId) {
-      const existing = await this.quoteRepository.findByPaymentIntentId(
-        paymentIntentId,
-      );
+      const existing =
+        await this.quoteRepository.findByPaymentIntentId(paymentIntentId);
       if (existing) {
         return this.toResponse(existing);
       }
@@ -567,6 +566,17 @@ export class QuoteService {
     const serviceDate = payload.preferredDate.trim();
     const preferredTime = payload.preferredTime.trim();
     const notes = payload.specialRequest.trim();
+    const totalPrice =
+      payload.totalPrice !== undefined && payload.totalPrice !== null
+        ? Number(payload.totalPrice)
+        : undefined;
+    const cleanerPrice =
+      payload.cleanerPrice !== undefined && payload.cleanerPrice !== null
+        ? Number(payload.cleanerPrice)
+        : undefined;
+    const assignedCleanerIds = Array.from(
+      new Set(payload.assignedCleanerIds || []),
+    ).filter(Boolean);
 
     const nameParts = this.splitFullName(contact.contactName!);
 
@@ -584,6 +594,24 @@ export class QuoteService {
       serviceDate,
       preferredTime,
       notes,
+      totalPrice: Number.isFinite(totalPrice) ? totalPrice : undefined,
+      cleanerEarningAmount: Number.isFinite(cleanerPrice)
+        ? cleanerPrice
+        : undefined,
+      cleaningFrequency: payload.cleaningFrequency,
+      squareFoot:
+        payload.squareFoot !== undefined && payload.squareFoot !== null
+          ? Number(payload.squareFoot)
+          : undefined,
+      paymentStatus: this.isManualServiceType(payload.serviceType)
+        ? "manual"
+        : "unpaid",
+      assignedCleanerIds: assignedCleanerIds.length
+        ? assignedCleanerIds
+        : undefined,
+      assignedCleanerId: assignedCleanerIds[0],
+      assignedCleanerAt: assignedCleanerIds.length ? new Date() : undefined,
+      currency: QUOTE.CURRENCY,
     });
 
     let finalQuote = quote;
@@ -676,6 +704,7 @@ export class QuoteService {
 
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
     const primaryCleaner = cleaners[0];
+    const cleanerCount = cleaners.length;
 
     let cleanerSharePercentage: number | undefined =
       payload.cleanerSharePercentage;
@@ -683,6 +712,11 @@ export class QuoteService {
       cleanerSharePercentage === undefined ||
       cleanerSharePercentage === null
     ) {
+      if (cleanerCount > 1) {
+        throw new BadRequestException(
+          "cleanerSharePercentage is required when assigning multiple cleaners",
+        );
+      }
       cleanerSharePercentage = primaryCleaner.cleanerPercentage;
     }
 
@@ -691,18 +725,28 @@ export class QuoteService {
       cleanerSharePercentage === null ||
       Number.isNaN(cleanerSharePercentage)
     ) {
-      throw new BadRequestException("Cleaner share percentage is not configured");
+      throw new BadRequestException(
+        "Cleaner share percentage is not configured",
+      );
     }
 
     if (cleanerSharePercentage < 0 || cleanerSharePercentage > 100) {
-      throw new BadRequestException("Cleaner share percentage must be between 0 and 100");
+      throw new BadRequestException(
+        "Cleaner share percentage must be between 0 and 100",
+      );
     }
+
+    const perCleanerPercentage =
+      cleanerCount > 0
+        ? Number((cleanerSharePercentage / cleanerCount).toFixed(4))
+        : cleanerSharePercentage;
 
     const updated = await this.quoteRepository.updateById(quoteId, {
       assignedCleanerId: primaryCleaner._id,
       assignedCleanerIds: cleaners.map((c) => c._id),
       assignedCleanerAt: new Date(),
-      cleanerPercentage: cleanerSharePercentage,
+      cleanerSharePercentage,
+      cleanerPercentage: perCleanerPercentage,
     });
 
     if (!updated) {
@@ -719,7 +763,7 @@ export class QuoteService {
     }
 
     const deleted = await this.quoteRepository.updateById(quoteId, {
-      isDeleted: true,
+      isDeleted: true as any,
       deletedAt: new Date(),
     });
 
@@ -772,7 +816,7 @@ export class QuoteService {
       requester.role === ROLES.ADMIN ||
       requester.role === ROLES.SUPER_ADMIN
     ) {
-      return this.toResponse(quote);
+      return this.buildResponseWithCleanerDetails(quote);
     }
 
     if (requester.role === ROLES.CLEANER) {
@@ -787,20 +831,54 @@ export class QuoteService {
       if (!isPrimary && !isInList) {
         throw new ForbiddenException("Cleaner is not assigned to this quote");
       }
-      return this.toResponse(quote);
+      return this.buildResponseWithCleanerDetails(quote);
     }
 
     if (requester.role === ROLES.CLIENT) {
       if (!quote.userId || quote.userId.toString() !== requester.userId) {
         throw new ForbiddenException("Client does not own this quote");
       }
-      return this.toResponse(quote);
+      return this.buildResponseWithCleanerDetails(quote);
     }
 
     throw new ForbiddenException("User is not authorized to access this quote");
   }
 
-  async markArrived(quoteId: string, clientId: string): Promise<QuoteResponse> {
+  private async buildResponseWithCleanerDetails(
+    quote: IQuote,
+  ): Promise<QuoteResponse> {
+    const response = this.toResponse(quote);
+    const ids = [
+      ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
+      quote.assignedCleanerId ? quote.assignedCleanerId.toString() : "",
+    ].filter(Boolean);
+
+    if (!ids.length) {
+      return response;
+    }
+
+    try {
+      const cleaners = await this.userService.getUsersByIds(ids);
+      response.assignedCleaners = cleaners.map((c) => ({
+        _id: c._id,
+        fullName: c.fullName,
+        email: c.email,
+        phone: c.phone,
+      }));
+    } catch (error) {
+      logger.warn(
+        { quoteId: quote._id.toString(), error },
+        "Failed to load assigned cleaner details",
+      );
+    }
+
+    return response;
+  }
+
+  async markArrived(
+    quoteId: string,
+    requester: { userId: string; role: string },
+  ): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
     if (!quote) {
@@ -813,8 +891,22 @@ export class QuoteService {
       );
     }
 
-    if (!quote.userId || quote.userId.toString() !== clientId) {
-      throw new ForbiddenException("Client does not own this quote");
+    const requesterId = requester.userId?.toString();
+    const isClient =
+      requester.role === ROLES.CLIENT &&
+      quote.userId &&
+      quote.userId.toString() === requesterId;
+    const isAssignedCleaner =
+      requester.role === ROLES.CLEANER &&
+      requesterId &&
+      ((quote.assignedCleanerId &&
+        quote.assignedCleanerId.toString() === requesterId) ||
+        (quote.assignedCleanerIds || [])
+          .map((id) => id.toString())
+          .includes(requesterId));
+
+    if (!isClient && !isAssignedCleaner) {
+      throw new ForbiddenException("User is not allowed to update this quote");
     }
 
     const currentStatus =
@@ -1080,6 +1172,11 @@ export class QuoteService {
     const status =
       quote.status ||
       (quote.paymentStatus === "paid" ? QUOTE.STATUSES.PAID : undefined);
+    const paymentStatus = this.isManualServiceType(serviceType)
+      ? quote.paymentStatus === "paid"
+        ? "paid"
+        : "manual"
+      : quote.paymentStatus;
     const cleaningStatus =
       serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
         ? quote.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING
@@ -1088,14 +1185,29 @@ export class QuoteService {
       serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
         ? quote.reportStatus
         : undefined;
+    const cleanerSharePercentage =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? (quote.cleanerSharePercentage ?? quote.cleanerPercentage)
+        : undefined;
     const cleanerPercentage =
       serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? quote.cleanerPercentage
+        ? (quote.cleanerPercentage ??
+          (cleanerSharePercentage !== undefined &&
+          cleanerSharePercentage !== null
+            ? Number(
+                (
+                  cleanerSharePercentage /
+                  Math.max(
+                    quote.assignedCleanerIds?.length ||
+                      0 ||
+                      (quote.assignedCleanerId ? 1 : 0),
+                    1,
+                  )
+                ).toFixed(4),
+              )
+            : undefined))
         : undefined;
-    const cleanerEarningAmount =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? quote.cleanerEarningAmount
-        : undefined;
+    const cleanerEarningAmount = quote.cleanerEarningAmount;
 
     return {
       _id: quote._id.toString(),
@@ -1122,7 +1234,7 @@ export class QuoteService {
       currency: quote.currency,
       paymentIntentId: quote.paymentIntentId,
       paymentAmount: quote.paymentAmount,
-      paymentStatus: quote.paymentStatus,
+      paymentStatus,
       paidAt: quote.paidAt,
       adminNotifiedAt: quote.adminNotifiedAt,
       assignedCleanerId: quote.assignedCleanerId?.toString(),
@@ -1130,8 +1242,11 @@ export class QuoteService {
       assignedCleanerAt: quote.assignedCleanerAt,
       cleaningStatus,
       reportStatus,
+      cleanerSharePercentage,
       cleanerPercentage,
       cleanerEarningAmount,
+      cleaningFrequency: quote.cleaningFrequency,
+      squareFoot: quote.squareFoot,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };
@@ -1200,7 +1315,10 @@ export class QuoteService {
     // Client view
     const clientStatus = (() => {
       if (isCompleted) return "completed";
-      if (report === QUOTE.REPORT_STATUSES.PENDING && cleaning === QUOTE.CLEANING_STATUSES.COMPLETED)
+      if (
+        report === QUOTE.REPORT_STATUSES.PENDING &&
+        cleaning === QUOTE.CLEANING_STATUSES.COMPLETED
+      )
         return "report_submitted";
       if (cleaning === QUOTE.CLEANING_STATUSES.IN_PROGRESS) return "ongoing";
       if (hasCleaner) return "assigned";
@@ -1210,7 +1328,10 @@ export class QuoteService {
     // Cleaner view
     const cleanerStatus = (() => {
       if (isCompleted) return "completed";
-      if (report === QUOTE.REPORT_STATUSES.PENDING && cleaning === QUOTE.CLEANING_STATUSES.COMPLETED)
+      if (
+        report === QUOTE.REPORT_STATUSES.PENDING &&
+        cleaning === QUOTE.CLEANING_STATUSES.COMPLETED
+      )
         return "waiting-for-admin-approval";
       if (cleaning === QUOTE.CLEANING_STATUSES.IN_PROGRESS) return "ongoing";
       if (hasCleaner) return "pending"; // assigned to cleaner but not started
@@ -1220,7 +1341,10 @@ export class QuoteService {
     // Admin view
     const adminStatus = (() => {
       if (isCompleted) return "completed";
-      if (report === QUOTE.REPORT_STATUSES.PENDING && cleaning === QUOTE.CLEANING_STATUSES.COMPLETED)
+      if (
+        report === QUOTE.REPORT_STATUSES.PENDING &&
+        cleaning === QUOTE.CLEANING_STATUSES.COMPLETED
+      )
         return "report_submitted";
       if (cleaning === QUOTE.CLEANING_STATUSES.IN_PROGRESS) return "on_site";
       if (hasCleaner) return "assigned";

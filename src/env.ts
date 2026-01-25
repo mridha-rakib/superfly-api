@@ -54,6 +54,7 @@ const envSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().min(1, "AWS secret key is required."),
   AWS_REGION: z.string().min(1, "AWS region is required."),
   AWS_S3_BUCKET: z.string().min(1, "S3 bucket name is required."),
+  AWS_S3_ENDPOINT: z.string().optional(),
 });
 
 try {
