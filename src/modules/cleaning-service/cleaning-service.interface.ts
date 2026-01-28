@@ -1,11 +1,15 @@
 import type { Document, Types } from "mongoose";
 
+export type CleaningServiceInputType = "BOOLEAN" | "QUANTITY";
+
 export interface ICleaningService extends Document {
   _id: Types.ObjectId;
   name: string;
   nameLower: string;
   code: string;
   price: number;
+  inputType: CleaningServiceInputType;
+  quantityLabel?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

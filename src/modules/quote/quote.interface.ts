@@ -58,6 +58,8 @@ export interface IQuote extends Document {
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
+  reportSubmittedBy?: Types.ObjectId | string;
+  reportSubmittedAt?: Date;
   /**
    * Total percentage of the quote amount that should be shared across all assigned cleaners.
    * The per-cleaner share is derived from this value divided by the number of cleaners.

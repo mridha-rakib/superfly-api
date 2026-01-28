@@ -9,6 +9,7 @@ import type {
 import { CleaningServiceRepository } from "./cleaning-service.repository";
 import type {
   CleaningServiceCreatePayload,
+  CleaningServiceInputType,
   CleaningServicePriceUpdatePayload,
   CleaningServiceResponse,
   CleaningServiceUpdatePayload,
@@ -39,11 +40,18 @@ export class CleaningServiceService {
       );
     }
 
+    const { inputType, quantityLabel } = this.resolveInputTypeAndLabel(
+      payload.inputType,
+      payload.quantityLabel
+    );
+
     const service = await this.repository.create({
       name: payload.name.trim(),
       nameLower,
       code,
       price: payload.price,
+      inputType,
+      quantityLabel,
       isActive: true,
     });
 
@@ -76,6 +84,15 @@ export class CleaningServiceService {
 
     if (payload.isActive !== undefined) {
       service.isActive = payload.isActive;
+    }
+
+    if (payload.inputType || payload.quantityLabel !== undefined) {
+      const { inputType, quantityLabel } = this.resolveInputTypeAndLabel(
+        payload.inputType ?? service.inputType,
+        payload.quantityLabel ?? service.quantityLabel
+      );
+      service.inputType = inputType;
+      service.quantityLabel = quantityLabel;
     }
 
     await service.save();
@@ -153,11 +170,15 @@ export class CleaningServiceService {
   }
 
   private toResponse(service: ICleaningService): CleaningServiceResponse {
+    const inputType =
+      (service.inputType as CleaningServiceInputType | undefined) || "BOOLEAN";
     return {
       _id: service._id.toString(),
       name: service.name,
       code: service.code,
       price: service.price,
+      inputType,
+      quantityLabel: inputType === "QUANTITY" ? service.quantityLabel : undefined,
       isActive: service.isActive,
       createdAt: service.createdAt,
       updatedAt: service.updatedAt,
@@ -196,5 +217,22 @@ export class CleaningServiceService {
     }
 
     return candidate;
+  }
+
+  private resolveInputTypeAndLabel(
+    inputType: CleaningServiceInputType | undefined,
+    quantityLabel: string | undefined
+  ) {
+    const resolvedType: CleaningServiceInputType = inputType ?? "BOOLEAN";
+    if (resolvedType === "QUANTITY") {
+      return {
+        inputType: "QUANTITY" as CleaningServiceInputType,
+        quantityLabel: quantityLabel?.trim(),
+      };
+    }
+    return {
+      inputType: "BOOLEAN" as CleaningServiceInputType,
+      quantityLabel: undefined,
+    };
   }
 }

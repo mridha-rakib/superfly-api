@@ -1,5 +1,6 @@
 import { QUOTE } from "@/constants/app.constants";
 import { S3Service, type StorageUploadInput } from "@/services/s3.service";
+import { realtimeService } from "@/services/realtime.service";
 import type { PaginateResult } from "@/ts/pagination.types";
 import {
   BadRequestException,
@@ -63,10 +64,14 @@ export class CleaningReportService {
       );
     }
 
-    const assignedIds = [
-      quote.assignedCleanerId?.toString(),
-      ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
-    ].filter(Boolean);
+    const assignedIds = Array.from(
+      new Set(
+        [
+          quote.assignedCleanerId?.toString(),
+          ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
+        ].filter(Boolean)
+      )
+    );
 
     if (!assignedIds.includes(cleanerId)) {
       throw new ForbiddenException("Cleaner is not assigned to this quote");
@@ -110,6 +115,8 @@ export class CleaningReportService {
       throw new BadRequestException("Before and after photos are required");
     }
 
+    const submissionTime = new Date();
+
     const report = await this.reportRepository.create({
       quoteId: quote._id,
       cleanerId,
@@ -122,8 +129,24 @@ export class CleaningReportService {
       status: QUOTE.REPORT_STATUSES.PENDING,
     });
 
-    await this.quoteRepository.updateById(quoteId, {
+    const updatePayload: Partial<IQuote> = {
       reportStatus: QUOTE.REPORT_STATUSES.PENDING,
+      reportSubmittedBy: cleanerId,
+      reportSubmittedAt: submissionTime,
+    };
+
+    if (quote.cleaningStatus !== QUOTE.CLEANING_STATUSES.COMPLETED) {
+      updatePayload.cleaningStatus = QUOTE.CLEANING_STATUSES.COMPLETED;
+    }
+
+    await this.quoteRepository.updateById(quoteId, updatePayload);
+
+    realtimeService.emitReportSubmitted({
+      quoteId: quote._id.toString(),
+      submittedBy: cleanerId,
+      assignedCleanerIds: assignedIds,
+      reportStatus: QUOTE.REPORT_STATUSES.PENDING,
+      submittedAt: submissionTime.toISOString(),
     });
 
     return this.toResponse(report as ReportDetails);

@@ -92,6 +92,8 @@ export type QuoteResponse = {
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
   reportStatus?: QuoteReportStatus;
+  reportSubmittedBy?: string;
+  reportSubmittedAt?: Date;
   cleanerSharePercentage?: number;
   cleanerPercentage?: number;
   cleanerEarningAmount?: number;

@@ -792,12 +792,20 @@ export class QuoteService {
 
   async getCleanerEarnings(
     cleanerId: string,
-  ): Promise<{ totalEarnings: number; totalJobs: number; currency: string }> {
+  ): Promise<{
+    totalEarning: number;
+    paidAmount: number;
+    pendingAmount: number;
+    totalJobs: number;
+    currency: string;
+  }> {
     const result = await this.quoteRepository.sumCleanerEarnings(cleanerId);
 
     return {
-      totalEarnings: Number(result.total || 0),
-      totalJobs: result.count || 0,
+      totalEarning: Number(result.totalEarning || 0),
+      paidAmount: Number(result.paidAmount || 0),
+      pendingAmount: Number(result.pendingAmount || 0),
+      totalJobs: result.totalJobs || 0,
       currency: QUOTE.CURRENCY,
     };
   }
@@ -1185,6 +1193,14 @@ export class QuoteService {
       serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
         ? quote.reportStatus
         : undefined;
+    const reportSubmittedBy =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? quote.reportSubmittedBy?.toString()
+        : undefined;
+    const reportSubmittedAt =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? quote.reportSubmittedAt
+        : undefined;
     const cleanerSharePercentage =
       serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
         ? (quote.cleanerSharePercentage ?? quote.cleanerPercentage)
@@ -1242,6 +1258,8 @@ export class QuoteService {
       assignedCleanerAt: quote.assignedCleanerAt,
       cleaningStatus,
       reportStatus,
+      reportSubmittedBy,
+      reportSubmittedAt,
       cleanerSharePercentage,
       cleanerPercentage,
       cleanerEarningAmount,

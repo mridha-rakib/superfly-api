@@ -20,6 +20,16 @@ const cleaningServiceSchema = BaseSchemaUtil.createSchema<ICleaningService>({
     unique: true,
     index: true,
   },
+  inputType: {
+    type: String,
+    enum: ["BOOLEAN", "QUANTITY"],
+    required: true,
+    default: "BOOLEAN",
+  },
+  quantityLabel: {
+    type: String,
+    trim: true,
+  },
   price: {
     type: Number,
     required: true,

@@ -11,7 +11,12 @@ export class QuoteRepository extends BaseRepository<IQuote> {
 
   async sumCleanerEarnings(
     cleanerId: string
-  ): Promise<{ total: number; count: number }> {
+  ): Promise<{
+    totalEarning: number;
+    paidAmount: number;
+    pendingAmount: number;
+    totalJobs: number;
+  }> {
     const results = await this.model
       .aggregate([
         {
@@ -20,28 +25,60 @@ export class QuoteRepository extends BaseRepository<IQuote> {
               { assignedCleanerId: new Types.ObjectId(cleanerId) },
               { assignedCleanerIds: new Types.ObjectId(cleanerId) },
             ],
-            serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
-            reportStatus: QUOTE.REPORT_STATUSES.APPROVED,
             isDeleted: { $ne: true },
           },
         },
         {
           $group: {
             _id: null,
-            total: { $sum: { $ifNull: ["$cleanerEarningAmount", 0] } },
-            count: { $sum: 1 },
+            totalEarning: { $sum: { $ifNull: ["$cleanerEarningAmount", 0] } },
+            paidAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ifNull: ["$reportSubmittedBy", false] },
+                      { $eq: ["$reportStatus", QUOTE.REPORT_STATUSES.APPROVED] },
+                    ],
+                  },
+                  { $ifNull: ["$cleanerEarningAmount", 0] },
+                  0,
+                ],
+              },
+            },
+            pendingAmount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ifNull: ["$reportSubmittedBy", false] },
+                      {
+                        $ne: ["$reportStatus", QUOTE.REPORT_STATUSES.APPROVED],
+                      },
+                    ],
+                  },
+                  { $ifNull: ["$cleanerEarningAmount", 0] },
+                  0,
+                ],
+              },
+            },
+            totalJobs: { $sum: 1 },
           },
         },
       ])
       .exec();
 
     if (!results.length) {
-      return { total: 0, count: 0 };
+      return { totalEarning: 0, paidAmount: 0, pendingAmount: 0, totalJobs: 0 };
     }
 
+    const { totalEarning, paidAmount, pendingAmount, totalJobs } = results[0];
+
     return {
-      total: results[0].total || 0,
-      count: results[0].count || 0,
+      totalEarning: totalEarning || 0,
+      paidAmount: paidAmount || 0,
+      pendingAmount: pendingAmount || 0,
+      totalJobs: totalJobs || 0,
     };
   }
 

@@ -133,6 +133,14 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     enum: Object.values(QUOTE.REPORT_STATUSES),
     index: true,
   },
+  reportSubmittedBy: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    index: true,
+  },
+  reportSubmittedAt: {
+    type: Date,
+  },
   cleanerPercentage: {
     type: Number,
     min: 0,

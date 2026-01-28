@@ -3,12 +3,14 @@ import app from "@/app";
 import { connectDB } from "@/config/database.config";
 import { env } from "@/env";
 import { logger } from "@/middlewares/pino-logger";
+import { realtimeService } from "@/services/realtime.service";
 import { bootstrapApplication } from "./config/bootstrap";
 
 const port = env.PORT;
 const server = app.listen(port, async () => {
   await connectDB();
   await bootstrapApplication();
+  realtimeService.initialize(server);
   logger.info(`Listening: http://localhost:${port}`);
 });
 
