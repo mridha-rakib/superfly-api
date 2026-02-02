@@ -583,6 +583,10 @@ export class QuoteService {
     )
       .map((service) => service.trim())
       .filter(Boolean);
+    const generalContractorName =
+      payload.generalContractorName?.trim() || undefined;
+    const generalContractorPhone =
+      payload.generalContractorPhone?.trim() || undefined;
     const assignedCleanerIds = Array.from(
       new Set(payload.assignedCleanerIds || []),
     ).filter(Boolean);
@@ -613,6 +617,8 @@ export class QuoteService {
           ? Number(payload.squareFoot)
           : undefined,
       cleaningServices: cleaningServices.length ? cleaningServices : undefined,
+      generalContractorName,
+      generalContractorPhone,
       paymentStatus: this.isManualServiceType(payload.serviceType)
         ? "manual"
         : "unpaid",

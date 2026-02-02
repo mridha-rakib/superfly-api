@@ -44,6 +44,8 @@ export type QuoteRequestPayload = {
   squareFoot?: number;
   cleaningFrequency?: string;
   cleaningServices?: string[];
+  generalContractorName?: string;
+  generalContractorPhone?: string;
   assignedCleanerIds?: string[];
 };
 
@@ -102,6 +104,8 @@ export type QuoteResponse = {
   squareFoot?: number;
   cleaningFrequency?: string;
   cleaningServices?: string[];
+  generalContractorName?: string;
+  generalContractorPhone?: string;
   createdAt: Date;
   updatedAt: Date;
   cleaningReport?: QuoteCleaningReportSummary;

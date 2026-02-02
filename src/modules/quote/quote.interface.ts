@@ -46,6 +46,8 @@ export interface IQuote extends Document {
   squareFoot?: number;
   cleaningFrequency?: string;
   cleaningServices?: string[];
+  generalContractorName?: string;
+  generalContractorPhone?: string;
   services?: IQuoteServiceItem[];
   totalPrice?: number;
   currency?: string;

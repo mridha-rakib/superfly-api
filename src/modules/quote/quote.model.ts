@@ -81,6 +81,14 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
       trim: true,
     },
   ],
+  generalContractorName: {
+    type: String,
+    trim: true,
+  },
+  generalContractorPhone: {
+    type: String,
+    trim: true,
+  },
   services: [
     {
       key: { type: String, required: true },

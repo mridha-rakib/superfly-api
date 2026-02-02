@@ -38,6 +38,8 @@ const baseServiceRequestSchema = z.object({
   squareFoot: z.coerce.number().positive().optional(),
   cleaningFrequency: z.enum(["daily", "weekly", "monthly"]).optional(),
   cleaningServices: z.array(cleaningServiceOptions).optional(),
+  generalContractorName: z.string().trim().min(1).max(150).optional(),
+  generalContractorPhone: z.string().trim().min(6).max(30).optional(),
   assignedCleanerIds: z.array(z.string().trim().min(1)).optional(),
 });
 
