@@ -3,6 +3,7 @@ import billingRouter from "@/modules/billing/billing.route";
 import cleaningServiceRouter from "@/modules/cleaning-service/cleaning-service.route";
 import cleaningReportRouter from "@/modules/cleaning-report/cleaning-report.route";
 import quoteRouter from "@/modules/quote/quote.route";
+import reviewRouter from "@/modules/review/review.route";
 import userRouter from "@/modules/user/user.route";
 
 import { Router } from "express";
@@ -25,6 +26,10 @@ const moduleRoutes = [
   {
     path: "/reports",
     route: cleaningReportRouter,
+  },
+  {
+    path: "/reviews",
+    route: reviewRouter,
   },
   {
     path: "/quotes",

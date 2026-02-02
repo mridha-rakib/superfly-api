@@ -11,6 +11,8 @@ import {
   confirmQuotePaymentSchema,
   createQuoteAuthSchema,
   createQuoteGuestSchema,
+  createCommercialServiceRequestAuthSchema,
+  createCommercialServiceRequestGuestSchema,
   createServiceRequestAuthSchema,
   createServiceRequestGuestSchema,
   createServiceRequestAdminSchema,
@@ -68,8 +70,8 @@ export class QuoteController {
   createCommercialRequest = asyncHandler(
     async (req: Request, res: Response) => {
       const schema = req.user
-        ? createServiceRequestAuthSchema
-        : createServiceRequestGuestSchema;
+        ? createCommercialServiceRequestAuthSchema
+        : createCommercialServiceRequestGuestSchema;
       const validated = await zParse(schema, req);
 
       const quote = await this.quoteService.createServiceRequest(
@@ -135,9 +137,11 @@ export class QuoteController {
         filter,
         paginateOptions
       );
+      const enriched =
+        await this.quoteService.toListResponsesWithClientAddress(result.data);
       const response = PaginationHelper.formatResponse({
         ...result,
-        data: result.data.map((quote) => this.quoteService.toResponse(quote)),
+        data: enriched,
       });
 
       return ApiResponse.paginated(
@@ -150,7 +154,8 @@ export class QuoteController {
 
     const filter = PaginationHelper.createSearchFilter(req.query, searchFields);
     const quotes = await this.quoteService.getAll(filter);
-    const data = quotes.map((quote) => this.quoteService.toResponse(quote));
+    const data =
+      await this.quoteService.toListResponsesWithClientAddress(quotes);
     ApiResponse.success(res, data, "Quotes fetched successfully");
   });
 

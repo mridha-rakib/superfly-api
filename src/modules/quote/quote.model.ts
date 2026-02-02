@@ -69,12 +69,18 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
   },
   squareFoot: {
     type: Number,
-    min: 0,
+    min: 1,
   },
   cleaningFrequency: {
     type: String,
     trim: true,
   },
+  cleaningServices: [
+    {
+      type: String,
+      trim: true,
+    },
+  ],
   services: [
     {
       key: { type: String, required: true },

@@ -6,6 +6,14 @@ const serviceSelectionSchema = z.record(
   z.coerce.number().int().min(0).default(0)
 );
 
+const cleaningServiceOptions = z.enum([
+  "janitorial_services",
+  "carpet_cleaning",
+  "window_cleaning",
+  "pressure_washing",
+  "floor_cleaning",
+]);
+
 const baseQuoteSchema = z.object({
   notes: z.string().max(500).optional(),
   services: serviceSelectionSchema.default({}),
@@ -24,11 +32,12 @@ const baseServiceRequestSchema = z.object({
     .trim()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Preferred date must be YYYY-MM-DD"),
   preferredTime: z.string().trim().min(1).max(60),
-  specialRequest: z.string().trim().min(1).max(500),
+  specialRequest: z.string().trim().max(500).optional(),
   totalPrice: z.coerce.number().min(0).optional(),
   cleanerPrice: z.coerce.number().min(0).optional(),
-  squareFoot: z.coerce.number().min(0).optional(),
-  cleaningFrequency: z.string().trim().max(100).optional(),
+  squareFoot: z.coerce.number().positive().optional(),
+  cleaningFrequency: z.enum(["daily", "weekly", "monthly"]).optional(),
+  cleaningServices: z.array(cleaningServiceOptions).optional(),
   assignedCleanerIds: z.array(z.string().trim().min(1)).optional(),
 });
 
@@ -59,6 +68,18 @@ export const createQuoteAuthSchema = z.object({
   }),
 });
 
+const commercialRequirements = {
+  cleaningServices: z
+    .array(cleaningServiceOptions)
+    .min(1, "Select at least one cleaning service"),
+  cleaningFrequency: z.enum(["daily", "weekly", "monthly"], {
+    required_error: "Cleaning frequency is required",
+  }),
+  squareFoot: z
+    .coerce.number()
+    .positive("Building size must be greater than zero"),
+};
+
 export const createServiceRequestGuestSchema = z.object({
   body: baseServiceRequestSchema.extend({
     name: z.string().trim().min(1).max(200),
@@ -73,6 +94,14 @@ export const createServiceRequestAuthSchema = z.object({
     email: z.string().email("Invalid email format").optional(),
     phoneNumber: z.string().trim().min(6).max(20).optional(),
   }),
+});
+
+export const createCommercialServiceRequestGuestSchema = z.object({
+  body: createServiceRequestGuestSchema.shape.body.extend(commercialRequirements),
+});
+
+export const createCommercialServiceRequestAuthSchema = z.object({
+  body: createServiceRequestAuthSchema.shape.body.extend(commercialRequirements),
 });
 
 export const createServiceRequestAdminSchema = z.object({

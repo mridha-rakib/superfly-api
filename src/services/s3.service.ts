@@ -1,5 +1,6 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { URL } from "url";
 import { env } from "@/env";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 
@@ -19,11 +20,14 @@ export class S3Service {
   private bucket: string;
   private region: string;
   private endpoint?: string;
+  private publicEndpoint?: string;
 
   constructor() {
     this.bucket = env.AWS_S3_BUCKET;
     this.region = env.AWS_REGION;
-    this.endpoint = env.AWS_S3_ENDPOINT?.replace(/\/+$/, "");
+    const configuredEndpoint = env.AWS_S3_ENDPOINT?.replace(/\/+$/, "");
+    this.publicEndpoint = configuredEndpoint;
+    this.endpoint = this.normalizeEndpoint(configuredEndpoint);
     this.client = new S3Client({
       region: this.region,
       endpoint: this.endpoint,
@@ -36,7 +40,7 @@ export class S3Service {
 
   async uploadFile(
     file: StorageUploadInput,
-    options: { prefix: string }
+    options: { prefix: string },
   ): Promise<StorageUploadResult> {
     const key = this.buildKey(options.prefix, file.originalName);
 
@@ -46,7 +50,7 @@ export class S3Service {
         Key: key,
         Body: file.buffer,
         ContentType: file.mimeType,
-      })
+      }),
     );
 
     return {
@@ -57,7 +61,7 @@ export class S3Service {
 
   async uploadFiles(
     files: StorageUploadInput[],
-    options: { prefix: string }
+    options: { prefix: string },
   ): Promise<StorageUploadResult[]> {
     const uploads = files.map((file) => this.uploadFile(file, options));
     return Promise.all(uploads);
@@ -66,16 +70,32 @@ export class S3Service {
   private buildKey(prefix: string, originalName: string): string {
     const normalizedPrefix = prefix.replace(/^\/+|\/+$/g, "");
     const extension = path.extname(originalName).toLowerCase();
-    const safeExtension =
-      extension && extension.length <= 10 ? extension : "";
+    const safeExtension = extension && extension.length <= 10 ? extension : "";
     return `${normalizedPrefix}/${uuidv4()}${safeExtension}`;
   }
 
   private buildPublicUrl(key: string): string {
-    if (this.endpoint) {
-      return `${this.endpoint}/${key}`;
+    const base = this.publicEndpoint || this.endpoint;
+    if (base) {
+      return `${base}/${key}`;
     }
     return `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+  }
+
+  private normalizeEndpoint(endpoint?: string): string | undefined {
+    if (!endpoint) {
+      return undefined;
+    }
+    try {
+      const url = new URL(endpoint);
+      const matchedBucketPrefix = `${this.bucket}.`;
+      if (url.hostname.startsWith(matchedBucketPrefix)) {
+        url.hostname = url.hostname.replace(matchedBucketPrefix, "");
+      }
+      return url.toString().replace(/\/+$/, "");
+    } catch {
+      return endpoint;
+    }
   }
 }
 

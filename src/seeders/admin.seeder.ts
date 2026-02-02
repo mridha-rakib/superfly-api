@@ -19,9 +19,6 @@ export class AdminSeeder {
     role: ROLES.ADMIN,
   };
 
-  /**
-   * Run seeder - creates admin if not exists
-   */
   static async run(): Promise<void> {
     try {
       logger.info("Starting admin seeder...");
@@ -61,7 +58,7 @@ export class AdminSeeder {
           email: this.DEFAULT_ADMIN.email,
           role: ROLES.ADMIN,
         },
-        "Admin user created successfully"
+        "Admin user created successfully",
       );
 
       logger.warn(
@@ -69,7 +66,7 @@ export class AdminSeeder {
           email: this.DEFAULT_ADMIN.email,
           password: this.DEFAULT_ADMIN.password,
         },
-        "IMPORTANT: Change admin password after first login."
+        "IMPORTANT: Change admin password after first login.",
       );
     } catch (error) {
       logger.error(error, "Error running admin seeder");
@@ -90,7 +87,7 @@ export class AdminSeeder {
           password: hashedPassword,
           mustChangePassword: true, // Force password change
         },
-        { new: true }
+        { new: true },
       );
 
       if (!admin) {

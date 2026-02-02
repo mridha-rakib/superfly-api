@@ -11,6 +11,7 @@ import {
 import type { PaginateOptions } from "mongoose";
 import type Stripe from "stripe";
 import { stripeCheckoutUrls } from "../billing/billing.config";
+import { CleaningReportRepository } from "../cleaning-report/cleaning-report.repository";
 import { CleaningServiceService } from "../cleaning-service/cleaning-service.service";
 import { UserService } from "../user/user.service";
 import { QuoteNotificationRepository } from "./quote-notification.repository";
@@ -18,6 +19,7 @@ import { QuotePaymentDraftRepository } from "./quote-payment.repository";
 import type { IQuote } from "./quote.interface";
 import { QuotePricingService } from "./quote.pricing";
 import { QuoteRepository } from "./quote.repository";
+import { formatTimeTo12Hour, normalizeTimeTo24Hour } from "@/utils/time.utils";
 import type {
   QuoteAssignCleanerPayload,
   QuoteCreatePayload,
@@ -48,6 +50,7 @@ export class QuoteService {
   private pricingService: QuotePricingService;
   private cleaningServiceService: CleaningServiceService;
   private userService: UserService;
+  private cleaningReportRepository: CleaningReportRepository;
 
   constructor() {
     this.quoteRepository = new QuoteRepository();
@@ -56,6 +59,7 @@ export class QuoteService {
     this.pricingService = new QuotePricingService();
     this.cleaningServiceService = new CleaningServiceService();
     this.userService = new UserService();
+    this.cleaningReportRepository = new CleaningReportRepository();
   }
 
   async createPaymentIntent(
@@ -66,7 +70,7 @@ export class QuoteService {
       payload,
       requestUserId,
     );
-    const preferredTime = payload.preferredTime.trim();
+    const preferredTime = normalizeTimeTo24Hour(payload.preferredTime);
     const pricingInput = this.normalizeServiceSelections(payload.services);
     const requestedCodes = Object.keys(pricingInput);
     const activeServices = requestedCodes.length
@@ -564,8 +568,8 @@ export class QuoteService {
     const companyName = payload.companyName.trim();
     const businessAddress = payload.businessAddress.trim();
     const serviceDate = payload.preferredDate.trim();
-    const preferredTime = payload.preferredTime.trim();
-    const notes = payload.specialRequest.trim();
+    const preferredTime = normalizeTimeTo24Hour(payload.preferredTime);
+    const notes = payload.specialRequest?.trim() || undefined;
     const totalPrice =
       payload.totalPrice !== undefined && payload.totalPrice !== null
         ? Number(payload.totalPrice)
@@ -574,6 +578,11 @@ export class QuoteService {
       payload.cleanerPrice !== undefined && payload.cleanerPrice !== null
         ? Number(payload.cleanerPrice)
         : undefined;
+    const cleaningServices = Array.from(
+      new Set(payload.cleaningServices || []),
+    )
+      .map((service) => service.trim())
+      .filter(Boolean);
     const assignedCleanerIds = Array.from(
       new Set(payload.assignedCleanerIds || []),
     ).filter(Boolean);
@@ -603,6 +612,7 @@ export class QuoteService {
         payload.squareFoot !== undefined && payload.squareFoot !== null
           ? Number(payload.squareFoot)
           : undefined,
+      cleaningServices: cleaningServices.length ? cleaningServices : undefined,
       paymentStatus: this.isManualServiceType(payload.serviceType)
         ? "manual"
         : "unpaid",
@@ -824,7 +834,9 @@ export class QuoteService {
       requester.role === ROLES.ADMIN ||
       requester.role === ROLES.SUPER_ADMIN
     ) {
-      return this.buildResponseWithCleanerDetails(quote);
+      const response = await this.buildResponseWithCleanerDetails(quote);
+      await this.attachCleaningReport(response, quote);
+      return response;
     }
 
     if (requester.role === ROLES.CLEANER) {
@@ -839,14 +851,18 @@ export class QuoteService {
       if (!isPrimary && !isInList) {
         throw new ForbiddenException("Cleaner is not assigned to this quote");
       }
-      return this.buildResponseWithCleanerDetails(quote);
+      const response = await this.buildResponseWithCleanerDetails(quote);
+      await this.attachCleaningReport(response, quote);
+      return response;
     }
 
     if (requester.role === ROLES.CLIENT) {
       if (!quote.userId || quote.userId.toString() !== requester.userId) {
         throw new ForbiddenException("Client does not own this quote");
       }
-      return this.buildResponseWithCleanerDetails(quote);
+      const response = await this.buildResponseWithCleanerDetails(quote);
+      await this.attachCleaningReport(response, quote);
+      return response;
     }
 
     throw new ForbiddenException("User is not authorized to access this quote");
@@ -860,6 +876,8 @@ export class QuoteService {
       ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
       quote.assignedCleanerId ? quote.assignedCleanerId.toString() : "",
     ].filter(Boolean);
+
+    await this.appendClientAddress(response, quote);
 
     if (!ids.length) {
       return response;
@@ -881,6 +899,100 @@ export class QuoteService {
     }
 
     return response;
+  }
+
+  private async appendClientAddress(
+    response: QuoteResponse,
+    quote: IQuote,
+  ): Promise<void> {
+    if (!quote.userId) {
+      return;
+    }
+
+    try {
+      const user = await this.userService.getById(quote.userId.toString());
+      if (user?.address) {
+        response.clientAddress = user.address;
+      }
+    } catch (error) {
+      logger.warn(
+        { quoteId: quote._id.toString(), error },
+        "Failed to load client address",
+      );
+    }
+  }
+
+  /**
+   * Enriches a list response with client addresses without performing
+   * per-row database lookups. We fetch all relevant users in a single query
+   * and map their addresses back onto the corresponding quote responses.
+   */
+  async toListResponsesWithClientAddress(
+    quotes: IQuote[],
+  ): Promise<QuoteResponse[]> {
+    const responses = quotes.map((quote) => this.toResponse(quote));
+
+    const userIds = Array.from(
+      new Set(
+        quotes
+          .map((q) => q.userId?.toString())
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (!userIds.length) {
+      return responses;
+    }
+
+    try {
+      const users = await this.userService.getUsersByIds(userIds);
+      const addressMap = new Map(
+        users
+          .filter((u) => Boolean(u.address))
+          .map((u) => [u._id.toString(), u.address!]),
+      );
+
+      responses.forEach((res, idx) => {
+        const uid = quotes[idx].userId?.toString();
+        if (uid && addressMap.has(uid)) {
+          res.clientAddress = addressMap.get(uid);
+        }
+      });
+    } catch (error) {
+      logger.warn(
+        { userIds },
+        "Failed to append client addresses to quote list",
+      );
+    }
+
+    return responses;
+  }
+
+  private async attachCleaningReport(
+    response: QuoteResponse,
+    quote: IQuote,
+  ): Promise<void> {
+    if (quote.serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      return;
+    }
+
+    const report = await this.cleaningReportRepository.findByQuoteId(
+      quote._id.toString(),
+    );
+    if (!report) {
+      return;
+    }
+
+    response.cleaningReport = {
+      arrivalTime: report.arrivalTime,
+      startTime: report.startTime,
+      endTime: report.endTime,
+      notes: report.notes,
+      beforePhotos: report.beforePhotos || [],
+      afterPhotos: report.afterPhotos || [],
+      status: report.status,
+      createdAt: report.createdAt,
+    };
   }
 
   async markArrived(
@@ -1063,7 +1175,7 @@ export class QuoteService {
       phoneNumber: quote.phoneNumber,
       businessAddress: quote.businessAddress,
       serviceDate: quote.serviceDate,
-      preferredTime: quote.preferredTime,
+      preferredTime: formatTimeTo12Hour(quote.preferredTime),
       requestedServices,
       notes: quote.notes,
     });
@@ -1265,6 +1377,7 @@ export class QuoteService {
       cleanerEarningAmount,
       cleaningFrequency: quote.cleaningFrequency,
       squareFoot: quote.squareFoot,
+      cleaningServices: quote.cleaningServices,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };
@@ -1326,9 +1439,13 @@ export class QuoteService {
       Boolean(quote.assignedCleanerIds && quote.assignedCleanerIds.length);
     const cleaning = quote.cleaningStatus;
     const report = quote.reportStatus;
+    const completedStatuses = new Set([
+      QUOTE.STATUSES.COMPLETED,
+      QUOTE.STATUSES.REVIEWED,
+    ]);
     const isCompleted =
       report === QUOTE.REPORT_STATUSES.APPROVED ||
-      quote.status === QUOTE.STATUSES.COMPLETED;
+      completedStatuses.has(quote.status);
 
     // Client view
     const clientStatus = (() => {

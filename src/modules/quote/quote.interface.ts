@@ -45,6 +45,7 @@ export interface IQuote extends Document {
   notes?: string;
   squareFoot?: number;
   cleaningFrequency?: string;
+  cleaningServices?: string[];
   services?: IQuoteServiceItem[];
   totalPrice?: number;
   currency?: string;
