@@ -2,6 +2,7 @@ import authRouter from "@/modules/auth/auth.route";
 import billingRouter from "@/modules/billing/billing.route";
 import cleaningServiceRouter from "@/modules/cleaning-service/cleaning-service.route";
 import cleaningReportRouter from "@/modules/cleaning-report/cleaning-report.route";
+import dashboardRouter from "@/modules/dashboard/dashboard.route";
 import quoteRouter from "@/modules/quote/quote.route";
 import reviewRouter from "@/modules/review/review.route";
 import userRouter from "@/modules/user/user.route";
@@ -18,6 +19,10 @@ const moduleRoutes = [
   {
     path: "/billing",
     route: billingRouter,
+  },
+  {
+    path: "/dashboard",
+    route: dashboardRouter,
   },
   {
     path: "/services",
