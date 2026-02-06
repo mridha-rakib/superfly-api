@@ -31,6 +31,7 @@ export interface IQuoteServiceItem {
 export interface IQuote extends Document {
   _id: Types.ObjectId;
   userId?: Types.ObjectId | string;
+  createdByRole?: string;
   serviceType: QuoteServiceType;
   status?: QuoteStatus;
   contactName?: string;

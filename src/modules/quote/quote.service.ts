@@ -560,7 +560,7 @@ export class QuoteService {
       throw new BadRequestException("Unsupported service type");
     }
 
-    const { contact, userId } = await this.resolveRequestContact(
+    const { contact, userId, createdByRole } = await this.resolveRequestContact(
       payload,
       requestUserId,
     );
@@ -596,6 +596,7 @@ export class QuoteService {
     const quote = await this.quoteRepository.create({
       userId,
       serviceType: payload.serviceType,
+      createdByRole,
       status: QUOTE.STATUSES.SUBMITTED,
       contactName: contact.contactName,
       firstName: nameParts.firstName || undefined,
@@ -950,20 +951,26 @@ export class QuoteService {
       return responses;
     }
 
-    try {
-      const users = await this.userService.getUsersByIds(userIds);
-      const addressMap = new Map(
-        users
-          .filter((u) => Boolean(u.address))
-          .map((u) => [u._id.toString(), u.address!]),
-      );
+      try {
+        const users = await this.userService.getUsersByIds(userIds);
+        const addressMap = new Map(
+          users
+            .filter((u) => Boolean(u.address))
+            .map((u) => [u._id.toString(), u.address!]),
+        );
+        const roleMap = new Map(
+          users.map((u) => [u._id.toString(), u.role]),
+        );
 
-      responses.forEach((res, idx) => {
-        const uid = quotes[idx].userId?.toString();
-        if (uid && addressMap.has(uid)) {
-          res.clientAddress = addressMap.get(uid);
-        }
-      });
+        responses.forEach((res, idx) => {
+          const uid = quotes[idx].userId?.toString();
+          if (uid && addressMap.has(uid)) {
+            res.clientAddress = addressMap.get(uid);
+          }
+          if (uid && !res.createdByRole && roleMap.has(uid)) {
+            res.createdByRole = roleMap.get(uid);
+          }
+        });
     } catch (error) {
       logger.warn(
         { userIds },
@@ -1098,7 +1105,11 @@ export class QuoteService {
   private async resolveRequestContact(
     payload: QuoteRequestPayload,
     requestUserId?: string,
-  ): Promise<{ contact: QuoteRequestContact; userId?: string }> {
+  ): Promise<{
+    contact: QuoteRequestContact;
+    userId?: string;
+    createdByRole?: string;
+  }> {
     const contact: QuoteRequestContact = {
       contactName: payload.name?.trim(),
       email: payload.email?.trim().toLowerCase(),
@@ -1106,11 +1117,13 @@ export class QuoteService {
     };
 
     let resolvedUserId: string | undefined;
+    let createdByRole: string | undefined;
 
     if (requestUserId) {
       const user = await this.userService.getById(requestUserId);
       if (user) {
         resolvedUserId = user._id.toString();
+        createdByRole = user.role;
         if (!contact.contactName) {
           contact.contactName = user.fullName;
         }
@@ -1127,7 +1140,11 @@ export class QuoteService {
 
     this.ensureRequestContact(contact);
 
-    return { contact, userId: resolvedUserId };
+    return {
+      contact,
+      userId: resolvedUserId,
+      createdByRole: createdByRole || "guest",
+    };
   }
 
   private splitFullName(fullName: string): {
@@ -1346,6 +1363,7 @@ export class QuoteService {
     return {
       _id: quote._id.toString(),
       userId: quote.userId?.toString(),
+      createdByRole: quote.createdByRole,
       serviceType,
       status,
       clientStatus: derived.clientStatus,
@@ -1384,6 +1402,8 @@ export class QuoteService {
       cleaningFrequency: quote.cleaningFrequency,
       squareFoot: quote.squareFoot,
       cleaningServices: quote.cleaningServices,
+      generalContractorName: quote.generalContractorName,
+      generalContractorPhone: quote.generalContractorPhone,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };

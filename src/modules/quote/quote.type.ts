@@ -62,6 +62,7 @@ export type QuoteAssignCleanerPayload = {
 export type QuoteResponse = {
   _id: string;
   userId?: string;
+  createdByRole?: string;
   serviceType: QuoteServiceType;
   status?: QuoteStatus;
   clientStatus?: string;

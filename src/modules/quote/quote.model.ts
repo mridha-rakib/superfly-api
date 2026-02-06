@@ -10,6 +10,11 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     ref: "User",
     index: true,
   },
+  createdByRole: {
+    type: String,
+    trim: true,
+    index: true,
+  },
   serviceType: {
     type: String,
     required: true,
