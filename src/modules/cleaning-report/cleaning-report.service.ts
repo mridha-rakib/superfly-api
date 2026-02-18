@@ -69,7 +69,7 @@ export class CleaningReportService {
         [
           quote.assignedCleanerId?.toString(),
           ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
-        ].filter(Boolean)
+        ].filter((id): id is string => Boolean(id))
       )
     );
 

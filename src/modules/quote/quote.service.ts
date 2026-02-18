@@ -1465,13 +1465,13 @@ export class QuoteService {
       Boolean(quote.assignedCleanerIds && quote.assignedCleanerIds.length);
     const cleaning = quote.cleaningStatus;
     const report = quote.reportStatus;
-    const completedStatuses = new Set([
+    const completedStatuses = new Set<string>([
       QUOTE.STATUSES.COMPLETED,
       QUOTE.STATUSES.REVIEWED,
     ]);
     const isCompleted =
       report === QUOTE.REPORT_STATUSES.APPROVED ||
-      completedStatuses.has(quote.status);
+      (quote.status ? completedStatuses.has(quote.status) : false);
 
     // Client view
     const clientStatus = (() => {

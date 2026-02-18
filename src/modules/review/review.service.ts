@@ -80,7 +80,7 @@ export class ReviewService {
 
   private toResponse(review: IReview): ReviewResponse {
     return {
-      _id: review._id.toString(),
+      _id: String(review._id),
       quoteId: review.quoteId?.toString?.() ?? "",
       clientId: review.clientId?.toString?.() ?? "",
       rating: review.rating,

@@ -75,7 +75,7 @@ const commercialRequirements = {
     .array(cleaningServiceOptions)
     .min(1, "Select at least one cleaning service"),
   cleaningFrequency: z.enum(["daily", "weekly", "monthly"], {
-    required_error: "Cleaning frequency is required",
+    message: "Cleaning frequency is required",
   }),
   squareFoot: z
     .coerce.number()

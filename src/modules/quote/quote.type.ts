@@ -38,7 +38,7 @@ export type QuoteRequestPayload = {
   businessAddress: string;
   preferredDate: string;
   preferredTime: string;
-  specialRequest: string;
+  specialRequest?: string;
   totalPrice?: number;
   cleanerPrice?: number;
   squareFoot?: number;
