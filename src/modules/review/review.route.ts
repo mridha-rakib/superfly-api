@@ -6,7 +6,8 @@ import { ReviewController } from "./review.controller";
 const router = Router();
 const controller = new ReviewController();
 
-router.get("/", authMiddleware.verifyToken, controller.listReviews);
+// Public reviews page: guests and logged-in clients can view reviews
+router.get("/", controller.listReviews);
 router.get(
   "/client",
   authMiddleware.verifyToken,

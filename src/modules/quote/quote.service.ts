@@ -1,6 +1,7 @@
 import { QUOTE, ROLES } from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
 import { EmailService } from "@/services/email.service";
+import { realtimeService } from "@/services/realtime.service";
 import { stripeService } from "@/services/stripe.service";
 import type { PaginateResult } from "@/ts/pagination.types";
 import {
@@ -10,11 +11,13 @@ import {
   UnauthorizedException,
 } from "@/utils/app-error.utils";
 import type { PaginateOptions } from "mongoose";
+import { Types } from "mongoose";
 import type Stripe from "stripe";
 import { stripeCheckoutUrls } from "../billing/billing.config";
 import { CleaningReportRepository } from "../cleaning-report/cleaning-report.repository";
 import { CleaningServiceService } from "../cleaning-service/cleaning-service.service";
 import { UserService } from "../user/user.service";
+import type { IUser } from "../user/user.interface";
 import { QuoteNotificationRepository } from "./quote-notification.repository";
 import { QuotePaymentDraftRepository } from "./quote-payment.repository";
 import type { IQuote } from "./quote.interface";
@@ -663,6 +666,10 @@ export class QuoteService {
       throw new BadRequestException("Invalid status update");
     }
 
+    const shouldNotifyCleanerOnClose =
+      payload.status === QUOTE.STATUSES.CLOSED &&
+      quote.status !== QUOTE.STATUSES.CLOSED;
+
     const update: Partial<IQuote> = { status: payload.status };
 
     if (
@@ -678,6 +685,17 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
+    if (shouldNotifyCleanerOnClose) {
+      try {
+        await this.notifyCleanersOnManualBookingClosed(updated);
+      } catch (error) {
+        logger.warn(
+          { quoteId: updated._id.toString(), error },
+          "Cleaner closed-booking notification failed",
+        );
+      }
+    }
+
     return this.toResponse(updated);
   }
 
@@ -691,6 +709,9 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
+    const previousCleanerIds = this.extractAssignedCleanerIds(quote);
+    const hadPreviousAssignment = previousCleanerIds.length > 0;
+
     const cleanerIds = payload.cleanerIds?.length
       ? payload.cleanerIds
       : payload.cleanerId
@@ -702,6 +723,10 @@ export class QuoteService {
     }
 
     const uniqueCleanerIds = Array.from(new Set(cleanerIds));
+    const assignmentChanged = !this.haveSameIdSet(
+      previousCleanerIds,
+      uniqueCleanerIds,
+    );
     const cleaners = await Promise.all(
       uniqueCleanerIds.map(async (id) => {
         const cleaner = await this.userService.getById(id);
@@ -768,7 +793,312 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
+    if (!hadPreviousAssignment || assignmentChanged) {
+      await this.notifyOnCleanerAssignmentChange({
+        quote,
+        quoteId: updated._id.toString(),
+        cleaners,
+        assignmentType: hadPreviousAssignment ? "reassigned" : "assigned",
+      });
+    }
+
     return this.toResponse(updated);
+  }
+
+  private extractAssignedCleanerIds(quote: IQuote): string[] {
+    return Array.from(
+      new Set(
+        [
+          quote.assignedCleanerId?.toString(),
+          ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    );
+  }
+
+  private haveSameIdSet(left: string[], right: string[]): boolean {
+    if (left.length !== right.length) return false;
+    const leftSet = new Set(left.map(String));
+    return right.every((id) => leftSet.has(String(id)));
+  }
+
+  private async notifyOnCleanerAssignmentChange(params: {
+    quote: IQuote;
+    quoteId: string;
+    cleaners: IUser[];
+    assignmentType: "assigned" | "reassigned";
+  }): Promise<void> {
+    const { quote, quoteId, cleaners, assignmentType } = params;
+    const cleanerNames = cleaners
+      .map((cleaner) => cleaner.fullName?.trim())
+      .filter((name): name is string => Boolean(name));
+    const serviceType = this.serviceTypeLabel(quote.serviceType);
+    const preferredTime = formatTimeTo12Hour(quote.preferredTime);
+    const clientName = this.resolveContactName(quote);
+    const createdAt = new Date().toISOString();
+    const isReassignment = assignmentType === "reassigned";
+
+    const cleanerRealtimeTitle = isReassignment
+      ? "Booking assignment updated"
+      : "New booking assigned";
+    const cleanerRealtimeMessage = isReassignment
+      ? `Your assignment was updated for booking #${quoteId}.`
+      : `You have been assigned to booking #${quoteId}.`;
+
+    cleaners.forEach((cleaner) => {
+      const cleanerId = cleaner._id?.toString();
+      if (!cleanerId) return;
+
+      realtimeService.emitQuoteAssignmentNotification({
+        userId: cleanerId,
+        recipientType: "cleaner",
+        quoteId,
+        assignmentType,
+        title: cleanerRealtimeTitle,
+        message: cleanerRealtimeMessage,
+        serviceType,
+        serviceDate: quote.serviceDate,
+        preferredTime,
+        createdAt,
+      });
+    });
+
+    const clientUserId = quote.userId?.toString();
+    if (clientUserId) {
+      const cleanerNamesText = cleanerNames.length
+        ? ` (${cleanerNames.join(", ")})`
+        : "";
+      realtimeService.emitQuoteAssignmentNotification({
+        userId: clientUserId,
+        recipientType: "client",
+        quoteId,
+        assignmentType,
+        title: isReassignment
+          ? "Cleaner assignment updated"
+          : "Cleaner assigned to your booking",
+        message: isReassignment
+          ? `Your booking #${quoteId} cleaner assignment was updated${cleanerNamesText}.`
+          : `A cleaner has been assigned to your booking #${quoteId}${cleanerNamesText}.`,
+        serviceType,
+        serviceDate: quote.serviceDate,
+        preferredTime,
+        createdAt,
+      });
+    }
+
+    const emailTasks: Promise<void>[] = [];
+
+    cleaners.forEach((cleaner) => {
+      const cleanerEmail = cleaner.email?.trim().toLowerCase();
+      if (!cleanerEmail) return;
+
+      emailTasks.push(
+        this.emailService
+          .sendCleanerAssignmentNotification({
+            to: cleanerEmail,
+            cleanerName: cleaner.fullName || "Cleaner",
+            bookingId: quoteId,
+            assignmentType,
+            serviceType,
+            serviceDate: quote.serviceDate,
+            preferredTime,
+            companyName: quote.companyName,
+            businessAddress: quote.businessAddress,
+            clientName,
+          })
+          .catch((error) => {
+            logger.warn(
+              { quoteId, cleanerId: cleaner._id?.toString(), cleanerEmail, error },
+              "Cleaner assignment notification email failed",
+            );
+          }),
+      );
+    });
+
+    const clientEmail = quote.email?.trim().toLowerCase();
+    if (clientEmail) {
+      emailTasks.push(
+        this.emailService
+          .sendClientCleanerAssignmentNotification({
+            to: clientEmail,
+            clientName,
+            bookingId: quoteId,
+            assignmentType,
+            serviceType,
+            serviceDate: quote.serviceDate,
+            preferredTime,
+            cleanerNames,
+            companyName: quote.companyName,
+            businessAddress: quote.businessAddress,
+          })
+          .catch((error) => {
+            logger.warn(
+              { quoteId, clientEmail, error },
+              "Client cleaner assignment notification email failed",
+            );
+          }),
+      );
+    }
+
+    if (emailTasks.length > 0) {
+      await Promise.allSettled(emailTasks);
+    }
+  }
+
+  private async notifyCleanersOnManualBookingClosed(quote: IQuote): Promise<void> {
+    const cleanerIds = this.extractAssignedCleanerIds(quote);
+    if (cleanerIds.length === 0) {
+      return;
+    }
+
+    const cleaners = (
+      await Promise.all(
+        cleanerIds.map(async (id) => {
+          try {
+            const user = await this.userService.getById(id);
+            if (!user || user.role !== ROLES.CLEANER) {
+              return null;
+            }
+            return user;
+          } catch (error) {
+            logger.warn(
+              { quoteId: quote._id.toString(), cleanerId: id, error },
+              "Failed to load cleaner for closed-booking notification",
+            );
+            return null;
+          }
+        }),
+      )
+    ).filter((cleaner): cleaner is IUser => Boolean(cleaner));
+
+    if (cleaners.length === 0) {
+      return;
+    }
+
+    const quoteId = quote._id.toString();
+    const serviceType = this.serviceTypeLabel(quote.serviceType);
+    const preferredTime = formatTimeTo12Hour(quote.preferredTime);
+    const createdAt = new Date().toISOString();
+
+    cleaners.forEach((cleaner) => {
+      const cleanerId = cleaner._id?.toString();
+      if (!cleanerId) return;
+
+      realtimeService.emitQuoteStatusNotification({
+        userId: cleanerId,
+        recipientType: "cleaner",
+        quoteId,
+        status: QUOTE.STATUSES.CLOSED,
+        title: "Booking closed",
+        message: `Booking #${quoteId} has been closed by admin.`,
+        serviceType,
+        serviceDate: quote.serviceDate,
+        preferredTime,
+        createdAt,
+      });
+    });
+
+    const emailTasks = cleaners.map((cleaner) => {
+      const cleanerEmail = cleaner.email?.trim().toLowerCase();
+      if (!cleanerEmail) {
+        return Promise.resolve();
+      }
+
+      return this.emailService
+        .sendCleanerBookingClosedNotification({
+          to: cleanerEmail,
+          cleanerName: cleaner.fullName || "Cleaner",
+          bookingId: quoteId,
+          serviceType,
+          serviceDate: quote.serviceDate,
+          preferredTime,
+          companyName: quote.companyName,
+          businessAddress: quote.businessAddress,
+        })
+        .catch((error) => {
+          logger.warn(
+            { quoteId, cleanerId: cleaner._id?.toString(), cleanerEmail, error },
+            "Cleaner closed-booking email failed",
+          );
+        });
+    });
+
+    await Promise.allSettled(emailTasks);
+  }
+
+  toCleanerFacingResponse(quote: IQuote, base?: QuoteResponse): QuoteResponse {
+    const response = base || this.toResponse(quote);
+    const allocatedAmount = this.resolveCleanerAllocatedAmountForQuote(quote);
+    const isCompleted = this.isQuoteCompletedForCleanerPayment(quote);
+
+    return {
+      ...response,
+      cleanerEarningAmount: Number(allocatedAmount.toFixed(2)),
+      paymentStatus: isCompleted ? "paid" : "pending",
+    };
+  }
+
+  private isQuoteCompletedForCleanerPayment(quote: IQuote): boolean {
+    const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    const status = (quote.status || "").toLowerCase();
+    const reportStatus = (quote.reportStatus || "").toLowerCase();
+
+    if (serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      return (
+        reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
+        status === QUOTE.STATUSES.COMPLETED ||
+        status === QUOTE.STATUSES.REVIEWED
+      );
+    }
+
+    return (
+      status === QUOTE.STATUSES.CLOSED ||
+      status === QUOTE.STATUSES.COMPLETED ||
+      status === QUOTE.STATUSES.REVIEWED
+    );
+  }
+
+  private resolveCleanerAllocatedAmountForQuote(quote: IQuote): number {
+    const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    const cleanerCount = this.resolveAssignedCleanerCount(quote);
+    const rawCleanerAmount = this.asFiniteNumber(quote.cleanerEarningAmount);
+    const totalPrice =
+      this.asFiniteNumber(quote.totalPrice) ??
+      this.asFiniteNumber(quote.paymentAmount);
+    const totalSharePct = this.asFiniteNumber(quote.cleanerSharePercentage);
+    const perCleanerPct =
+      this.asFiniteNumber(quote.cleanerPercentage) ??
+      (totalSharePct !== undefined
+        ? totalSharePct / Math.max(cleanerCount, 1)
+        : undefined);
+
+    if (
+      totalPrice !== undefined &&
+      perCleanerPct !== undefined &&
+      perCleanerPct > 0
+    ) {
+      return Number(((totalPrice * perCleanerPct) / 100).toFixed(2));
+    }
+
+    if (rawCleanerAmount !== undefined) {
+      if (this.isManualServiceType(serviceType)) {
+        return Number((rawCleanerAmount / Math.max(cleanerCount, 1)).toFixed(2));
+      }
+      return Number(rawCleanerAmount.toFixed(2));
+    }
+
+    return 0;
+  }
+
+  private resolveAssignedCleanerCount(quote: IQuote): number {
+    const ids = this.extractAssignedCleanerIds(quote);
+    return ids.length > 0 ? ids.length : 1;
+  }
+
+  private asFiniteNumber(value: unknown): number | undefined {
+    return typeof value === "number" && Number.isFinite(value)
+      ? value
+      : undefined;
   }
 
   async deleteQuote(quoteId: string): Promise<void> {
@@ -814,12 +1144,37 @@ export class QuoteService {
     totalJobs: number;
     currency: string;
   }> {
-    const result = await this.quoteRepository.sumCleanerEarnings(cleanerId);
+    const objectId = new Types.ObjectId(cleanerId);
+    const quotes = await this.quoteRepository.findAll({
+      $or: [
+        { assignedCleanerId: objectId },
+        { assignedCleanerIds: objectId },
+      ],
+    });
+
+    const result = quotes.reduce(
+      (acc, quote) => {
+        const amount = this.resolveCleanerAllocatedAmountForQuote(quote as IQuote);
+        const roundedAmount = Number(amount.toFixed(2));
+
+        acc.totalJobs += 1;
+        acc.totalEarning += roundedAmount;
+
+        if (this.isQuoteCompletedForCleanerPayment(quote as IQuote)) {
+          acc.paidAmount += roundedAmount;
+        } else {
+          acc.pendingAmount += roundedAmount;
+        }
+
+        return acc;
+      },
+      { totalEarning: 0, paidAmount: 0, pendingAmount: 0, totalJobs: 0 },
+    );
 
     return {
-      totalEarning: Number(result.totalEarning || 0),
-      paidAmount: Number(result.paidAmount || 0),
-      pendingAmount: Number(result.pendingAmount || 0),
+      totalEarning: Number((result.totalEarning || 0).toFixed(2)),
+      paidAmount: Number((result.paidAmount || 0).toFixed(2)),
+      pendingAmount: Number((result.pendingAmount || 0).toFixed(2)),
       totalJobs: result.totalJobs || 0,
       currency: QUOTE.CURRENCY,
     };
@@ -839,7 +1194,8 @@ export class QuoteService {
       requester.role === ROLES.ADMIN ||
       requester.role === ROLES.SUPER_ADMIN
     ) {
-      const response = await this.buildResponseWithCleanerDetails(quote);
+      let response = await this.buildResponseWithCleanerDetails(quote);
+      response = this.toCleanerFacingResponse(quote, response);
       await this.attachCleaningReport(response, quote);
       return response;
     }
@@ -1185,6 +1541,7 @@ export class QuoteService {
   private async notifyAdmin(quote: IQuote): Promise<IQuote> {
     const requestedServices = this.resolveRequestedServices(quote);
     const clientName = this.resolveContactName(quote);
+    const preferredTime = formatTimeTo12Hour(quote.preferredTime);
 
     await this.notificationRepository.createOnce({
       quoteId: quote._id.toString(),
@@ -1196,10 +1553,27 @@ export class QuoteService {
       phoneNumber: quote.phoneNumber,
       businessAddress: quote.businessAddress,
       serviceDate: quote.serviceDate,
-      preferredTime: formatTimeTo12Hour(quote.preferredTime),
+      preferredTime,
       requestedServices,
       notes: quote.notes,
     });
+
+    const createdByRole = (quote.createdByRole || "").toLowerCase();
+    const isAdminCreated =
+      createdByRole === ROLES.ADMIN || createdByRole === ROLES.SUPER_ADMIN;
+
+    if (!isAdminCreated) {
+      realtimeService.emitAdminQuoteCreated({
+        quoteId: quote._id.toString(),
+        serviceType: this.serviceTypeLabel(quote.serviceType),
+        clientName,
+        clientEmail: quote.email,
+        serviceDate: quote.serviceDate,
+        preferredTime,
+        companyName: quote.companyName,
+        createdAt: new Date().toISOString(),
+      });
+    }
 
     const update: Partial<IQuote> = {
       adminNotifiedAt: new Date(),
@@ -1522,6 +1896,8 @@ export class QuoteService {
     cleanerStatus: string;
     adminStatus: string;
   } {
+    const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    const isManualService = this.isManualServiceType(serviceType);
     const hasCleaner =
       Boolean(quote.assignedCleanerId) ||
       Boolean(quote.assignedCleanerIds && quote.assignedCleanerIds.length);
@@ -1538,7 +1914,7 @@ export class QuoteService {
 
     // Client view
     const clientStatus = (() => {
-      if (isClosed) return "closed";
+      if (isClosed) return isManualService ? "completed" : "closed";
       if (isCompleted) return "completed";
       if (
         report === QUOTE.REPORT_STATUSES.PENDING &&
@@ -1552,7 +1928,7 @@ export class QuoteService {
 
     // Cleaner view
     const cleanerStatus = (() => {
-      if (isClosed) return "closed";
+      if (isClosed) return isManualService ? "completed" : "closed";
       if (isCompleted) return "completed";
       if (
         report === QUOTE.REPORT_STATUSES.PENDING &&

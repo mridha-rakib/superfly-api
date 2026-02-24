@@ -64,6 +64,43 @@ type ClientBookingConfirmationPayload = {
   businessAddress?: string;
 };
 
+type CleanerAssignmentNotificationPayload = {
+  to: string;
+  cleanerName: string;
+  bookingId: string;
+  assignmentType: "assigned" | "reassigned";
+  serviceType: string;
+  serviceDate: string;
+  preferredTime?: string;
+  companyName?: string;
+  businessAddress?: string;
+  clientName?: string;
+};
+
+type ClientCleanerAssignmentNotificationPayload = {
+  to: string;
+  clientName: string;
+  bookingId: string;
+  assignmentType: "assigned" | "reassigned";
+  serviceType: string;
+  serviceDate: string;
+  preferredTime?: string;
+  cleanerNames?: string[];
+  companyName?: string;
+  businessAddress?: string;
+};
+
+type CleanerBookingClosedNotificationPayload = {
+  to: string;
+  cleanerName: string;
+  bookingId: string;
+  serviceType: string;
+  serviceDate: string;
+  preferredTime?: string;
+  companyName?: string;
+  businessAddress?: string;
+};
+
 export class EmailService {
   private provider: "postmark" | "smtp" | "disabled";
   private transporter?: Transporter;
@@ -328,6 +365,151 @@ export class EmailService {
     });
   }
 
+  async sendCleanerAssignmentNotification(
+    payload: CleanerAssignmentNotificationPayload,
+  ): Promise<void> {
+    const isReassignment = payload.assignmentType === "reassigned";
+    const subject = isReassignment
+      ? `${APP.NAME} booking assignment updated #${this.safeText(payload.bookingId)}`
+      : `${APP.NAME} new booking assigned #${this.safeText(payload.bookingId)}`;
+    const jobsLink = `${env.CLIENT_URL}/my-jobs/${payload.bookingId}`;
+    const html = this.wrapTemplate(`
+      <p>Hi ${this.safeText(payload.cleanerName || "there")},</p>
+      <p>${
+        isReassignment
+          ? `Your assignment has been updated for a ${this.safeText(payload.serviceType)} booking.`
+          : `You have been assigned to a ${this.safeText(payload.serviceType)} booking.`
+      }</p>
+      <p><strong>Booking ID:</strong> ${this.safeText(payload.bookingId)}</p>
+      <p><strong>Service date:</strong> ${this.safeText(payload.serviceDate)}</p>
+      ${
+        payload.preferredTime
+          ? `<p><strong>Preferred time:</strong> ${this.safeText(payload.preferredTime)}</p>`
+          : ""
+      }
+      ${
+        payload.clientName
+          ? `<p><strong>Client:</strong> ${this.safeText(payload.clientName)}</p>`
+          : ""
+      }
+      ${
+        payload.companyName
+          ? `<p><strong>Company:</strong> ${this.safeText(payload.companyName)}</p>`
+          : ""
+      }
+      ${
+        payload.businessAddress
+          ? `<p><strong>Address:</strong> ${this.safeText(payload.businessAddress)}</p>`
+          : ""
+      }
+      <p>Open your jobs page for details:</p>
+      <p><a href="${jobsLink}">${jobsLink}</a></p>
+    `);
+
+    await this.send({
+      to: payload.to,
+      subject,
+      html,
+      text: this.stripHtml(html),
+    });
+  }
+
+  async sendClientCleanerAssignmentNotification(
+    payload: ClientCleanerAssignmentNotificationPayload,
+  ): Promise<void> {
+    const isReassignment = payload.assignmentType === "reassigned";
+    const subject = isReassignment
+      ? `${APP.NAME} cleaner assignment updated #${this.safeText(payload.bookingId)}`
+      : `${APP.NAME} cleaner assigned for booking #${this.safeText(payload.bookingId)}`;
+    const bookingLink = `${env.CLIENT_URL}/my-booking/${payload.bookingId}`;
+    const cleanerNamesText =
+      payload.cleanerNames && payload.cleanerNames.length > 0
+        ? payload.cleanerNames.map((name) => this.safeText(name)).join(", ")
+        : "";
+
+    const html = this.wrapTemplate(`
+      <p>Hi ${this.safeText(payload.clientName || "there")},</p>
+      <p>${
+        isReassignment
+          ? "Your booking cleaner assignment has been updated."
+          : "A cleaner has been assigned to your booking."
+      }</p>
+      <p><strong>Booking ID:</strong> ${this.safeText(payload.bookingId)}</p>
+      <p><strong>Service type:</strong> ${this.safeText(payload.serviceType)}</p>
+      <p><strong>Service date:</strong> ${this.safeText(payload.serviceDate)}</p>
+      ${
+        payload.preferredTime
+          ? `<p><strong>Preferred time:</strong> ${this.safeText(payload.preferredTime)}</p>`
+          : ""
+      }
+      ${
+        cleanerNamesText
+          ? `<p><strong>Assigned cleaner(s):</strong> ${cleanerNamesText}</p>`
+          : ""
+      }
+      ${
+        payload.companyName
+          ? `<p><strong>Company:</strong> ${this.safeText(payload.companyName)}</p>`
+          : ""
+      }
+      ${
+        payload.businessAddress
+          ? `<p><strong>Address:</strong> ${this.safeText(payload.businessAddress)}</p>`
+          : ""
+      }
+      <p>You can view your booking details here:</p>
+      <p><a href="${bookingLink}">${bookingLink}</a></p>
+    `);
+
+    await this.send({
+      to: payload.to,
+      subject,
+      html,
+      text: this.stripHtml(html),
+    });
+  }
+
+  async sendCleanerBookingClosedNotification(
+    payload: CleanerBookingClosedNotificationPayload,
+  ): Promise<void> {
+    const subject = `${APP.NAME} booking closed #${this.safeText(
+      payload.bookingId,
+    )}`;
+    const jobsLink = `${env.CLIENT_URL}/my-jobs/${payload.bookingId}`;
+
+    const html = this.wrapTemplate(`
+      <p>Hi ${this.safeText(payload.cleanerName || "there")},</p>
+      <p>A booking assigned to you has been marked as <strong>closed</strong> by admin.</p>
+      <p><strong>Booking ID:</strong> ${this.safeText(payload.bookingId)}</p>
+      <p><strong>Service type:</strong> ${this.safeText(payload.serviceType)}</p>
+      <p><strong>Service date:</strong> ${this.safeText(payload.serviceDate)}</p>
+      ${
+        payload.preferredTime
+          ? `<p><strong>Preferred time:</strong> ${this.safeText(payload.preferredTime)}</p>`
+          : ""
+      }
+      ${
+        payload.companyName
+          ? `<p><strong>Company:</strong> ${this.safeText(payload.companyName)}</p>`
+          : ""
+      }
+      ${
+        payload.businessAddress
+          ? `<p><strong>Address:</strong> ${this.safeText(payload.businessAddress)}</p>`
+          : ""
+      }
+      <p>You can check your jobs page for details:</p>
+      <p><a href="${jobsLink}">${jobsLink}</a></p>
+    `);
+
+    await this.send({
+      to: payload.to,
+      subject,
+      html,
+      text: this.stripHtml(html),
+    });
+  }
+
   private async send(payload: BasicEmailPayload): Promise<void> {
     if (!this.enabled || !this.transporter) {
       if (this.provider === "postmark" && this.postmarkClient) {
@@ -361,24 +543,76 @@ export class EmailService {
   }
 
   private wrapTemplate(content: string): string {
-    const logoMarkup = this.logoUrl
-      ? `<img src="${this.logoUrl}" alt="${this.safeText(
-          APP.NAME,
-        )}" style="max-width: 160px; height: auto; margin-bottom: 16px;" />`
-      : `<h2 style="margin: 0 0 16px;">${this.safeText(APP.NAME)}</h2>`;
-
-    const brandColor = this.brandColor || "#111111";
+    const companyName = this.safeText(APP.NAME);
+    const brandColor = this.resolveBrandColor();
 
     return `
-      <div style="font-family: Arial, sans-serif; color: #111; background-color: #f6f7f9; padding: 24px;">
-        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 24px; border-top: 4px solid ${brandColor};">
-        ${logoMarkup}
-        ${content}
-        <p>Thanks,</p>
-        <p>The ${APP.NAME} team</p>
+      <div style="margin:0; padding:24px; background-color:#f3f4f6;">
+        <div style="max-width:640px; margin:0 auto; background-color:#ffffff; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden; font-family:Arial, sans-serif; color:#111827;">
+          ${this.buildTemplateHeader(companyName, brandColor)}
+          <div style="padding:24px;">
+            <div style="font-size:14px; line-height:1.6; color:#111827;">
+              ${content}
+            </div>
+          </div>
+          ${this.buildTemplateFooter(companyName, brandColor)}
         </div>
       </div>
     `;
+  }
+
+  private buildTemplateHeader(companyName: string, brandColor: string): string {
+    const logoMarkup = this.logoUrl?.trim()
+      ? `
+          <img
+            src="${this.safeText(this.logoUrl.trim())}"
+            alt="${companyName} logo"
+            style="display:block; max-width:52px; max-height:52px; width:auto; height:auto; border-radius:8px; background:#ffffff; padding:6px;"
+          />
+        `
+      : "";
+
+    return `
+      <div style="padding:20px 24px; background:linear-gradient(135deg, ${brandColor} 0%, #111827 100%);">
+        <div style="display:flex; align-items:center; gap:12px;">
+          ${logoMarkup}
+          <div>
+            <p style="margin:0; font-size:12px; line-height:1.2; color:#ffffffCC; text-transform:uppercase; letter-spacing:0.08em;">
+              ${this.safeText(this.fromName || "Company")}
+            </p>
+            <p style="margin:4px 0 0; font-size:20px; line-height:1.3; font-weight:700; color:#ffffff;">
+              ${companyName}
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private buildTemplateFooter(companyName: string, brandColor: string): string {
+    const replyToLine = this.replyTo?.trim()
+      ? `<p style="margin:0 0 8px;">Questions? Reply to <a href="mailto:${this.safeText(
+          this.replyTo.trim(),
+        )}" style="color:${brandColor}; text-decoration:none;">${this.safeText(this.replyTo.trim())}</a></p>`
+      : "";
+
+    return `
+      <div style="padding:20px 24px; background-color:#f9fafb; border-top:1px solid #e5e7eb;">
+        <p style="margin:0 0 8px; font-size:13px; line-height:1.5; color:#374151;">
+          Thanks,<br />
+          The ${companyName} team
+        </p>
+        ${replyToLine}
+        <p style="margin:0; font-size:12px; line-height:1.5; color:#6b7280;">
+          © ${new Date().getFullYear()} ${companyName}. All rights reserved.
+        </p>
+      </div>
+    `;
+  }
+
+  private resolveBrandColor(): string {
+    const color = this.brandColor?.trim();
+    return color || "#111827";
   }
 
   private safeText(value: string): string {

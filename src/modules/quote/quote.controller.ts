@@ -196,7 +196,9 @@ export class QuoteController {
         );
         const response = PaginationHelper.formatResponse({
           ...result,
-          data: result.data.map((quote) => this.quoteService.toResponse(quote)),
+          data: result.data.map((quote) =>
+            this.quoteService.toCleanerFacingResponse(quote as any)
+          ),
         });
 
         return ApiResponse.paginated(
@@ -212,7 +214,9 @@ export class QuoteController {
         ...cleanerFilter,
       };
       const quotes = await this.quoteService.getAll(filter);
-      const data = quotes.map((quote) => this.quoteService.toResponse(quote));
+      const data = quotes.map((quote) =>
+        this.quoteService.toCleanerFacingResponse(quote as any)
+      );
       ApiResponse.success(res, data, "Assigned quotes fetched successfully");
     }
   );
