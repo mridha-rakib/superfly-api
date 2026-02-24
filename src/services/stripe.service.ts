@@ -7,9 +7,7 @@ export class StripeService {
   private stripe: Stripe;
 
   constructor() {
-    this.stripe = new Stripe(env.STRIPE_SECRET_KEY, {
-      apiVersion: "2025-11-17.clover",
-    });
+    this.stripe = new Stripe(env.STRIPE_SECRET_KEY);
   }
 
   async createPaymentIntent(params: Stripe.PaymentIntentCreateParams) {
