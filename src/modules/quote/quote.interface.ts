@@ -11,6 +11,7 @@ export type QuoteStatus =
   | "reviewed"
   | "contacted"
   | "paid"
+  | "closed"
   | "completed";
 
 export type QuoteCleaningStatus =

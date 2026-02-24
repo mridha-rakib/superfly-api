@@ -3,18 +3,32 @@ import type { IQuote } from "@/modules/quote/quote.interface";
 import { Quote } from "@/modules/quote/quote.model";
 import { User } from "@/modules/user/user.model";
 import type {
+  CleanerEarningsRow,
+  DashboardEarningsAnalytics,
+  DashboardEarningsAnalyticsQuery,
   DashboardBookingRow,
   DashboardOverview,
+  EarningsBookingWiseRow,
   EarningsPoint,
+  ServiceEarningsRow,
 } from "./dashboard.type";
 
 const TIME_ZONE = "UTC";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type AggregateRow = { _id: string; total: number };
+type ServiceLabel = "Residential" | "Commercial" | "Post-Construction";
+type CleanerRow = {
+  _id: { toString(): string };
+  fullName?: string;
+  email?: string;
+};
 
 const roundAmount = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
 
 const startOfDayUtc = (date: Date) =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -55,12 +69,18 @@ const parseDate = (value?: string | Date | null) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const mapServiceLabel = (serviceType?: string) => {
+const mapServiceLabel = (serviceType?: string): ServiceLabel => {
   const normalized = (serviceType || "").toLowerCase();
   if (normalized === QUOTE.SERVICE_TYPES.COMMERCIAL) return "Commercial";
   if (normalized === QUOTE.SERVICE_TYPES.POST_CONSTRUCTION) return "Post-Construction";
   return "Residential";
 };
+
+const serviceLabels: ServiceLabel[] = [
+  "Residential",
+  "Commercial",
+  "Post-Construction",
+];
 
 const buildBookingId = (serviceType: string, rawId: string) => {
   const normalized = (serviceType || "").toLowerCase();
@@ -80,6 +100,7 @@ const mapBookingStatus = (quote: IQuote) => {
   }
   if (
     quote.status === QUOTE.STATUSES.COMPLETED ||
+    quote.status === QUOTE.STATUSES.CLOSED ||
     quote.status === QUOTE.STATUSES.REVIEWED
   ) {
     return "Complete";
@@ -113,6 +134,136 @@ const resolveAmount = (quote: IQuote) => {
   }
   return 0;
 };
+
+const resolveCleanerIds = (quote: IQuote): string[] => {
+  return Array.from(
+    new Set([
+      ...(quote.assignedCleanerIds || []).map((id) => id.toString()),
+      quote.assignedCleanerId ? quote.assignedCleanerId.toString() : "",
+    ]),
+  ).filter(Boolean);
+};
+
+const resolveCleanerTotalAmount = (quote: IQuote, totalAmount: number): number => {
+  if (isFiniteNumber(quote.cleanerEarningAmount)) {
+    return Math.max(0, quote.cleanerEarningAmount);
+  }
+
+  if (totalAmount <= 0) {
+    return 0;
+  }
+
+  const cleanerCount = resolveCleanerIds(quote).length;
+  const sharePercentage = isFiniteNumber(quote.cleanerSharePercentage)
+    ? quote.cleanerSharePercentage
+    : isFiniteNumber(quote.cleanerPercentage)
+      ? quote.cleanerPercentage * Math.max(cleanerCount, 1)
+      : 0;
+
+  if (sharePercentage <= 0) {
+    return 0;
+  }
+
+  return (totalAmount * sharePercentage) / 100;
+};
+
+const resolvePerCleanerAmount = (
+  quote: IQuote,
+  totalAmount: number,
+  cleanerTotal: number,
+  cleanerCount: number,
+): number => {
+  if (cleanerCount <= 0) {
+    return 0;
+  }
+
+  if (isFiniteNumber(quote.cleanerPercentage) && totalAmount > 0) {
+    return Math.max(0, (totalAmount * quote.cleanerPercentage) / 100);
+  }
+
+  if (cleanerTotal <= 0) {
+    return 0;
+  }
+
+  return cleanerTotal / cleanerCount;
+};
+
+const resolveAdminAmount = (totalAmount: number, cleanerAmount: number): number =>
+  Math.max(0, totalAmount - cleanerAmount);
+
+const formatFrequency = (value?: string) => {
+  const normalized = (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+
+  if (normalized === "weekly") return "Weekly";
+  if (normalized === "monthly") return "Monthly";
+  if (normalized === "daily") return "Daily";
+  return "One Time";
+};
+
+const formatStatusLabel = (value?: string) => {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "Pending";
+  }
+
+  return normalized
+    .split(/[_\-\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const normalizeServiceFilter = (value?: string) => {
+  const normalized = (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-]+/g, "_");
+
+  if (normalized === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+    return QUOTE.SERVICE_TYPES.RESIDENTIAL;
+  }
+  if (normalized === QUOTE.SERVICE_TYPES.COMMERCIAL) {
+    return QUOTE.SERVICE_TYPES.COMMERCIAL;
+  }
+  if (normalized === QUOTE.SERVICE_TYPES.POST_CONSTRUCTION) {
+    return QUOTE.SERVICE_TYPES.POST_CONSTRUCTION;
+  }
+
+  return undefined;
+};
+
+const isLikelyBooking = (quote: IQuote) => {
+  if ((quote.paymentStatus || "").toLowerCase() === "paid") {
+    return true;
+  }
+
+  const status = (quote.status || "").toLowerCase();
+  return (
+    status === QUOTE.STATUSES.PAID ||
+    status === QUOTE.STATUSES.REVIEWED ||
+    status === QUOTE.STATUSES.CONTACTED ||
+    status === QUOTE.STATUSES.CLOSED ||
+    status === QUOTE.STATUSES.COMPLETED
+  );
+};
+
+const toSearchText = (row: EarningsBookingWiseRow) =>
+  [
+    row.id,
+    row.rawId,
+    row.customer,
+    row.service,
+    row.recordType,
+    row.status,
+    row.paymentStatus,
+    row.frequency,
+    row.date,
+  ]
+    .join(" ")
+    .toLowerCase();
 
 export class DashboardService {
   async getOverview(): Promise<DashboardOverview> {
@@ -236,6 +387,235 @@ export class DashboardService {
         yearly,
       },
       recentBookings,
+    };
+  }
+
+  async getEarningsAnalytics(
+    query: DashboardEarningsAnalyticsQuery,
+  ): Promise<DashboardEarningsAnalytics> {
+    const requestedPage =
+      Number.isFinite(query.page) && query.page > 0 ? Math.floor(query.page) : 1;
+    const limit = Number.isFinite(query.limit)
+      ? Math.min(Math.max(Math.floor(query.limit), 1), 100)
+      : 10;
+    const search = query.search?.trim().toLowerCase();
+    const serviceTypeFilter = normalizeServiceFilter(query.serviceType);
+
+    const quotes = await Quote.find({ isDeleted: { $ne: true } })
+      .sort({ createdAt: -1 })
+      .select(
+        "_id serviceType status paymentStatus createdAt serviceDate preferredTime cleaningFrequency companyName contactName firstName lastName email totalPrice paymentAmount cleanerEarningAmount cleanerSharePercentage cleanerPercentage assignedCleanerId assignedCleanerIds",
+      )
+      .lean<IQuote[]>();
+
+    const filteredQuotes = serviceTypeFilter
+      ? quotes.filter((quote) => quote.serviceType === serviceTypeFilter)
+      : quotes;
+
+    const earningQuotes = filteredQuotes.filter((quote) => resolveAmount(quote) > 0);
+
+    const summaryBase = {
+      totalEarnings: 0,
+      paidEarnings: 0,
+      cleanerEarnings: 0,
+      adminEarnings: 0,
+    };
+
+    const serviceAccumulator = new Map<
+      ServiceLabel,
+      {
+        jobs: number;
+        totalEarnings: number;
+        paidEarnings: number;
+        cleanerEarnings: number;
+        adminEarnings: number;
+      }
+    >();
+
+    serviceLabels.forEach((label) => {
+      serviceAccumulator.set(label, {
+        jobs: 0,
+        totalEarnings: 0,
+        paidEarnings: 0,
+        cleanerEarnings: 0,
+        adminEarnings: 0,
+      });
+    });
+
+    for (const quote of earningQuotes) {
+      const totalAmount = resolveAmount(quote);
+      const cleanerAmount = resolveCleanerTotalAmount(quote, totalAmount);
+      const adminAmount = resolveAdminAmount(totalAmount, cleanerAmount);
+      const serviceLabel = mapServiceLabel(quote.serviceType);
+      const serviceStat = serviceAccumulator.get(serviceLabel);
+      const paidAmount = (quote.paymentStatus || "").toLowerCase() === "paid"
+        ? totalAmount
+        : 0;
+
+      summaryBase.totalEarnings += totalAmount;
+      summaryBase.paidEarnings += paidAmount;
+      summaryBase.cleanerEarnings += cleanerAmount;
+      summaryBase.adminEarnings += adminAmount;
+
+      if (serviceStat) {
+        serviceStat.jobs += 1;
+        serviceStat.totalEarnings += totalAmount;
+        serviceStat.paidEarnings += paidAmount;
+        serviceStat.cleanerEarnings += cleanerAmount;
+        serviceStat.adminEarnings += adminAmount;
+      }
+    }
+
+    const serviceWise: ServiceEarningsRow[] = serviceLabels.map((label) => {
+      const stat = serviceAccumulator.get(label);
+      const jobs = stat?.jobs || 0;
+      const totalEarnings = stat?.totalEarnings || 0;
+
+      return {
+        serviceType: label,
+        jobs,
+        totalEarnings: roundAmount(totalEarnings),
+        paidEarnings: roundAmount(stat?.paidEarnings || 0),
+        cleanerEarnings: roundAmount(stat?.cleanerEarnings || 0),
+        adminEarnings: roundAmount(stat?.adminEarnings || 0),
+        averageEarning: roundAmount(jobs > 0 ? totalEarnings / jobs : 0),
+      };
+    });
+
+    const cleanerIds = Array.from(
+      new Set(earningQuotes.flatMap((quote) => resolveCleanerIds(quote))),
+    );
+
+    const cleaners = cleanerIds.length
+      ? await User.find({
+        _id: { $in: cleanerIds },
+        role: ROLES.CLEANER,
+        isDeleted: { $ne: true },
+      })
+        .select("_id fullName email")
+        .lean<CleanerRow[]>()
+      : [];
+
+    const cleanerIdentityMap = new Map<string, { name: string; email?: string }>();
+    cleaners.forEach((cleaner) => {
+      const cleanerId = cleaner._id.toString();
+      cleanerIdentityMap.set(cleanerId, {
+        name: cleaner.fullName || "Cleaner",
+        email: cleaner.email,
+      });
+    });
+
+    const cleanerAccumulator = new Map<string, { jobs: number; total: number }>();
+    for (const quote of earningQuotes) {
+      const assignedCleanerIds = resolveCleanerIds(quote);
+      if (!assignedCleanerIds.length) {
+        continue;
+      }
+
+      const totalAmount = resolveAmount(quote);
+      const cleanerAmount = resolveCleanerTotalAmount(quote, totalAmount);
+      const perCleanerAmount = resolvePerCleanerAmount(
+        quote,
+        totalAmount,
+        cleanerAmount,
+        assignedCleanerIds.length,
+      );
+
+      assignedCleanerIds.forEach((cleanerId) => {
+        const existing = cleanerAccumulator.get(cleanerId) || {
+          jobs: 0,
+          total: 0,
+        };
+
+        existing.jobs += 1;
+        existing.total += perCleanerAmount;
+        cleanerAccumulator.set(cleanerId, existing);
+      });
+    }
+
+    const cleanerWise: CleanerEarningsRow[] = Array.from(cleanerAccumulator.entries())
+      .map(([cleanerId, stats]) => {
+        const identity = cleanerIdentityMap.get(cleanerId);
+        const jobs = stats.jobs || 0;
+        const total = stats.total || 0;
+
+        return {
+          cleanerId,
+          cleanerName: identity?.name || "Cleaner",
+          cleanerEmail: identity?.email,
+          jobs,
+          totalEarnings: roundAmount(total),
+          averageEarning: roundAmount(jobs > 0 ? total / jobs : 0),
+        };
+      })
+      .sort((a, b) => b.totalEarnings - a.totalEarnings);
+
+    const allRows: EarningsBookingWiseRow[] = earningQuotes.map((quote) => {
+      const rawId = quote._id?.toString?.() || "";
+      const totalAmount = resolveAmount(quote);
+      const cleanerAmount = resolveCleanerTotalAmount(quote, totalAmount);
+      const adminAmount = resolveAdminAmount(totalAmount, cleanerAmount);
+      const serviceDate = parseDate(quote.serviceDate);
+      const createdAt = parseDate(quote.createdAt);
+      const displayDate = formatDayMonth(serviceDate || createdAt || new Date());
+      const cleanerCount = resolveCleanerIds(quote).length;
+
+      return {
+        id: buildBookingId(quote.serviceType, rawId),
+        rawId,
+        recordType: isLikelyBooking(quote) ? "Booking" : "Quote",
+        customer: resolveCustomerName(quote),
+        service: mapServiceLabel(quote.serviceType),
+        frequency: formatFrequency(quote.cleaningFrequency),
+        status: formatStatusLabel(quote.status),
+        paymentStatus: formatStatusLabel(quote.paymentStatus),
+        date: displayDate,
+        preferredTime: quote.preferredTime,
+        totalAmount: roundAmount(totalAmount),
+        cleanerAmount: roundAmount(cleanerAmount),
+        adminAmount: roundAmount(adminAmount),
+        cleanerCount,
+      };
+    });
+
+    const searchedRows = search
+      ? allRows.filter((row) => toSearchText(row).includes(search))
+      : allRows;
+
+    const totalItems = searchedRows.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+    const page = Math.min(requestedPage, totalPages);
+    const startIndex = (page - 1) * limit;
+    const pagedRows = searchedRows.slice(startIndex, startIndex + limit);
+
+    const totalRecords = earningQuotes.length;
+    const totalBookings = earningQuotes.filter((quote) => isLikelyBooking(quote)).length;
+    const totalQuotes = Math.max(totalRecords - totalBookings, 0);
+
+    return {
+      summary: {
+        totalEarnings: roundAmount(summaryBase.totalEarnings),
+        paidEarnings: roundAmount(summaryBase.paidEarnings),
+        outstandingEarnings: roundAmount(
+          Math.max(summaryBase.totalEarnings - summaryBase.paidEarnings, 0),
+        ),
+        cleanerEarnings: roundAmount(summaryBase.cleanerEarnings),
+        adminEarnings: roundAmount(summaryBase.adminEarnings),
+        totalRecords,
+        totalBookings,
+        totalQuotes,
+      },
+      serviceWise,
+      cleanerWise,
+      bookingWise: {
+        rows: pagedRows,
+        pagination: {
+          page,
+          limit,
+          totalItems,
+          totalPages,
+        },
+      },
     };
   }
 

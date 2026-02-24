@@ -1,5 +1,6 @@
 import { QUOTE, ROLES } from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
+import { EmailService } from "@/services/email.service";
 import { stripeService } from "@/services/stripe.service";
 import type { PaginateResult } from "@/ts/pagination.types";
 import {
@@ -47,6 +48,7 @@ export class QuoteService {
   private quoteRepository: QuoteRepository;
   private paymentDraftRepository: QuotePaymentDraftRepository;
   private notificationRepository: QuoteNotificationRepository;
+  private emailService: EmailService;
   private pricingService: QuotePricingService;
   private cleaningServiceService: CleaningServiceService;
   private userService: UserService;
@@ -56,6 +58,7 @@ export class QuoteService {
     this.quoteRepository = new QuoteRepository();
     this.paymentDraftRepository = new QuotePaymentDraftRepository();
     this.notificationRepository = new QuoteNotificationRepository();
+    this.emailService = new EmailService();
     this.pricingService = new QuotePricingService();
     this.cleaningServiceService = new CleaningServiceService();
     this.userService = new UserService();
@@ -316,7 +319,8 @@ export class QuoteService {
     draft.quoteId = quote._id.toString();
     await draft.save();
 
-    return this.toResponse(quote);
+    const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
+    return this.toResponse(finalQuote);
   }
 
   async getPaymentStatus(
@@ -455,7 +459,8 @@ export class QuoteService {
     }
     await draft.save();
 
-    return this.toResponse(quote);
+    const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
+    return this.toResponse(finalQuote);
   }
 
   private async getCheckoutSessionStatus(
@@ -569,6 +574,9 @@ export class QuoteService {
     const businessAddress = payload.businessAddress.trim();
     const serviceDate = payload.preferredDate.trim();
     const preferredTime = normalizeTimeTo24Hour(payload.preferredTime);
+    const cleaningFrequency = this.normalizeCleaningFrequency(
+      payload.cleaningFrequency,
+    );
     const notes = payload.specialRequest?.trim() || undefined;
     const totalPrice =
       payload.totalPrice !== undefined && payload.totalPrice !== null
@@ -612,7 +620,7 @@ export class QuoteService {
       cleanerEarningAmount: Number.isFinite(cleanerPrice)
         ? cleanerPrice
         : undefined,
-      cleaningFrequency: payload.cleaningFrequency,
+      cleaningFrequency,
       squareFoot:
         payload.squareFoot !== undefined && payload.squareFoot !== null
           ? Number(payload.squareFoot)
@@ -631,17 +639,7 @@ export class QuoteService {
       currency: QUOTE.CURRENCY,
     });
 
-    let finalQuote = quote;
-
-    try {
-      finalQuote = await this.notifyAdmin(quote);
-    } catch (error) {
-      logger.warn(
-        { quoteId: quote._id.toString(), error },
-        "Admin notification failed",
-      );
-    }
-
+    const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
     return this.toResponse(finalQuote);
   }
 
@@ -1219,6 +1217,52 @@ export class QuoteService {
     return updated || quote;
   }
 
+  private async notifyStakeholdersOnQuoteCreated(
+    quote: IQuote,
+  ): Promise<IQuote> {
+    let finalQuote = quote;
+
+    try {
+      finalQuote = await this.notifyAdmin(quote);
+    } catch (error) {
+      logger.warn(
+        { quoteId: quote._id.toString(), error },
+        "Admin notification failed",
+      );
+    }
+
+    if (this.shouldSendClientBookingConfirmation(quote)) {
+      try {
+        await this.emailService.sendClientBookingConfirmation({
+          to: quote.email.toLowerCase(),
+          clientName: this.resolveContactName(quote),
+          bookingId: quote._id.toString(),
+          serviceType: this.serviceTypeLabel(quote.serviceType),
+          serviceDate: quote.serviceDate,
+          preferredTime: formatTimeTo12Hour(quote.preferredTime),
+          companyName: quote.companyName,
+          businessAddress: quote.businessAddress,
+        });
+      } catch (error) {
+        logger.warn(
+          { quoteId: quote._id.toString(), clientEmail: quote.email, error },
+          "Client booking confirmation email failed",
+        );
+      }
+    }
+
+    return finalQuote;
+  }
+
+  private shouldSendClientBookingConfirmation(quote: IQuote): boolean {
+    if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      return true;
+    }
+
+    const createdByRole = (quote.createdByRole || "").toLowerCase();
+    return createdByRole === ROLES.CLIENT || createdByRole === "guest";
+  }
+
   private isManualServiceType(serviceType: string): boolean {
     return (
       serviceType === QUOTE.SERVICE_TYPES.COMMERCIAL ||
@@ -1230,8 +1274,26 @@ export class QuoteService {
     return (
       status === QUOTE.STATUSES.ADMIN_NOTIFIED ||
       status === QUOTE.STATUSES.REVIEWED ||
-      status === QUOTE.STATUSES.CONTACTED
+      status === QUOTE.STATUSES.CONTACTED ||
+      status === QUOTE.STATUSES.CLOSED
     );
+  }
+
+  private normalizeCleaningFrequency(value?: string): string {
+    const normalized = (value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, "-");
+
+    if (
+      normalized === "daily" ||
+      normalized === "weekly" ||
+      normalized === "monthly"
+    ) {
+      return normalized;
+    }
+
+    return "one-time";
   }
 
   private resolveRequestedServices(quote: IQuote): string[] {
@@ -1469,12 +1531,14 @@ export class QuoteService {
       QUOTE.STATUSES.COMPLETED,
       QUOTE.STATUSES.REVIEWED,
     ]);
+    const isClosed = quote.status === QUOTE.STATUSES.CLOSED;
     const isCompleted =
       report === QUOTE.REPORT_STATUSES.APPROVED ||
       (quote.status ? completedStatuses.has(quote.status) : false);
 
     // Client view
     const clientStatus = (() => {
+      if (isClosed) return "closed";
       if (isCompleted) return "completed";
       if (
         report === QUOTE.REPORT_STATUSES.PENDING &&
@@ -1488,6 +1552,7 @@ export class QuoteService {
 
     // Cleaner view
     const cleanerStatus = (() => {
+      if (isClosed) return "closed";
       if (isCompleted) return "completed";
       if (
         report === QUOTE.REPORT_STATUSES.PENDING &&
@@ -1501,6 +1566,7 @@ export class QuoteService {
 
     // Admin view
     const adminStatus = (() => {
+      if (isClosed) return "closed";
       if (isCompleted) return "completed";
       if (
         report === QUOTE.REPORT_STATUSES.PENDING &&

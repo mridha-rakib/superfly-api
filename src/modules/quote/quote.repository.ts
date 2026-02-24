@@ -85,4 +85,32 @@ export class QuoteRepository extends BaseRepository<IQuote> {
   async findByPaymentIntentId(paymentIntentId: string): Promise<IQuote | null> {
     return this.model.findOne({ paymentIntentId }).exec();
   }
+
+  async findManualQuotesForCleanerReminder(
+    maxServiceDate: string,
+  ): Promise<IQuote[]> {
+    return this.model
+      .find({
+        serviceType: {
+          $in: [
+            QUOTE.SERVICE_TYPES.COMMERCIAL,
+            QUOTE.SERVICE_TYPES.POST_CONSTRUCTION,
+          ],
+        },
+        isDeleted: { $ne: true },
+        status: {
+          $nin: [QUOTE.STATUSES.COMPLETED, QUOTE.STATUSES.CLOSED],
+        },
+        serviceDate: { $lte: maxServiceDate },
+        preferredTime: { $exists: true, $ne: "" },
+        $or: [
+          { assignedCleanerId: { $exists: true, $ne: null } },
+          { "assignedCleanerIds.0": { $exists: true } },
+        ],
+      })
+      .select(
+        "_id serviceType companyName businessAddress serviceDate preferredTime cleaningFrequency assignedCleanerId assignedCleanerIds",
+      )
+      .exec();
+  }
 }

@@ -14,6 +14,13 @@ const cleaningServiceOptions = z.enum([
   "floor_cleaning",
 ]);
 
+const cleaningFrequencyOptions = z.enum([
+  "one-time",
+  "daily",
+  "weekly",
+  "monthly",
+]);
+
 const baseQuoteSchema = z.object({
   notes: z.string().max(500).optional(),
   services: serviceSelectionSchema.default({}),
@@ -36,7 +43,7 @@ const baseServiceRequestSchema = z.object({
   totalPrice: z.coerce.number().min(0).optional(),
   cleanerPrice: z.coerce.number().min(0).optional(),
   squareFoot: z.coerce.number().positive().optional(),
-  cleaningFrequency: z.enum(["daily", "weekly", "monthly"]).optional(),
+  cleaningFrequency: cleaningFrequencyOptions.optional(),
   cleaningServices: z.array(cleaningServiceOptions).optional(),
   generalContractorName: z.string().trim().min(1).max(150).optional(),
   generalContractorPhone: z.string().trim().min(6).max(30).optional(),
@@ -74,9 +81,7 @@ const commercialRequirements = {
   cleaningServices: z
     .array(cleaningServiceOptions)
     .min(1, "Select at least one cleaning service"),
-  cleaningFrequency: z.enum(["daily", "weekly", "monthly"], {
-    message: "Cleaning frequency is required",
-  }),
+  cleaningFrequency: cleaningFrequencyOptions,
   squareFoot: z
     .coerce.number()
     .positive("Building size must be greater than zero"),
@@ -124,6 +129,7 @@ export const updateQuoteStatusSchema = z.object({
       QUOTE.STATUSES.ADMIN_NOTIFIED,
       QUOTE.STATUSES.REVIEWED,
       QUOTE.STATUSES.CONTACTED,
+      QUOTE.STATUSES.CLOSED,
     ]),
   }),
   params: z.object({

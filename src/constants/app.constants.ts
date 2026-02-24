@@ -62,6 +62,7 @@ export const QUOTE = {
     REVIEWED: "reviewed",
     CONTACTED: "contacted",
     PAID: "paid",
+    CLOSED: "closed",
     COMPLETED: "completed",
   },
   CLEANING_STATUSES: {

@@ -43,6 +43,27 @@ type AccountCredentialsPayload = {
   loginLink?: string;
 };
 
+type CleanerScheduleReminderPayload = {
+  to: string;
+  cleanerName: string;
+  serviceType: string;
+  scheduledFor: string;
+  companyName?: string;
+  businessAddress?: string;
+  cleaningFrequency?: string;
+};
+
+type ClientBookingConfirmationPayload = {
+  to: string;
+  clientName: string;
+  bookingId: string;
+  serviceType: string;
+  serviceDate: string;
+  preferredTime?: string;
+  companyName?: string;
+  businessAddress?: string;
+};
+
 export class EmailService {
   private provider: "postmark" | "smtp" | "disabled";
   private transporter?: Transporter;
@@ -220,6 +241,83 @@ export class EmailService {
       )}</strong></p>
       <p>Please log in and change your password right away:</p>
       <p><a href="${loginLink}">${loginLink}</a></p>
+    `);
+
+    await this.send({
+      to: payload.to,
+      subject,
+      html,
+      text: this.stripHtml(html),
+    });
+  }
+
+  async sendCleanerScheduleReminder(
+    payload: CleanerScheduleReminderPayload,
+  ): Promise<void> {
+    const subject = `${APP.NAME} job reminder: ${payload.serviceType} in 24 hours`;
+    const html = this.wrapTemplate(`
+      <p>Hi ${this.safeText(payload.cleanerName || "there")},</p>
+      <p>This is a reminder that you are assigned to an upcoming ${this.safeText(
+        payload.serviceType,
+      )} job in 24 hours.</p>
+      <p><strong>Scheduled for:</strong> ${this.safeText(
+        payload.scheduledFor,
+      )}</p>
+      ${
+        payload.cleaningFrequency
+          ? `<p><strong>Cleaning frequency:</strong> ${this.safeText(payload.cleaningFrequency)}</p>`
+          : ""
+      }
+      ${
+        payload.companyName
+          ? `<p><strong>Company:</strong> ${this.safeText(payload.companyName)}</p>`
+          : ""
+      }
+      ${
+        payload.businessAddress
+          ? `<p><strong>Address:</strong> ${this.safeText(payload.businessAddress)}</p>`
+          : ""
+      }
+      <p>Please plan to arrive on time and follow any site instructions.</p>
+    `);
+
+    await this.send({
+      to: payload.to,
+      subject,
+      html,
+      text: this.stripHtml(html),
+    });
+  }
+
+  async sendClientBookingConfirmation(
+    payload: ClientBookingConfirmationPayload,
+  ): Promise<void> {
+    const subject = `${APP.NAME} booking confirmation #${this.safeText(
+      payload.bookingId,
+    )}`;
+    const bookingLink = `${env.CLIENT_URL}/my-booking`;
+    const html = this.wrapTemplate(`
+      <p>Hi ${this.safeText(payload.clientName || "there")},</p>
+      <p>Your ${this.safeText(payload.serviceType)} booking has been created successfully.</p>
+      <p><strong>Booking ID:</strong> ${this.safeText(payload.bookingId)}</p>
+      <p><strong>Preferred date:</strong> ${this.safeText(payload.serviceDate)}</p>
+      ${
+        payload.preferredTime
+          ? `<p><strong>Preferred time:</strong> ${this.safeText(payload.preferredTime)}</p>`
+          : ""
+      }
+      ${
+        payload.companyName
+          ? `<p><strong>Company:</strong> ${this.safeText(payload.companyName)}</p>`
+          : ""
+      }
+      ${
+        payload.businessAddress
+          ? `<p><strong>Address:</strong> ${this.safeText(payload.businessAddress)}</p>`
+          : ""
+      }
+      <p>You can track updates from your dashboard:</p>
+      <p><a href="${bookingLink}">${bookingLink}</a></p>
     `);
 
     await this.send({

@@ -13,4 +13,11 @@ router.get(
   dashboardController.getOverview
 );
 
+router.get(
+  "/earnings-analytics",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  dashboardController.getEarningsAnalytics
+);
+
 export default router;
