@@ -12,6 +12,7 @@ type BasicEmailPayload = {
   subject: string;
   html: string;
   text?: string;
+  replyTo?: string;
 };
 
 type VerificationEmailPayload = {
@@ -99,6 +100,13 @@ type CleanerBookingClosedNotificationPayload = {
   preferredTime?: string;
   companyName?: string;
   businessAddress?: string;
+};
+
+type PublicContactMessagePayload = {
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
 };
 
 type EmailTemplateOptions = {
@@ -569,6 +577,49 @@ export class EmailService {
     });
   }
 
+  async sendPublicContactMessage(
+    payload: PublicContactMessagePayload,
+  ): Promise<void> {
+    const contactInbox = this.resolveContactEmail();
+    const senderName = payload.name.trim();
+    const senderEmail = payload.email.trim().toLowerCase();
+    const normalizedSubject = payload.subject.replace(/[\r\n]+/g, " ").trim();
+    const normalizedMessage = payload.message.trim();
+    const replyLink = `mailto:${senderEmail}?subject=${encodeURIComponent(
+      `Re: ${normalizedSubject}`,
+    )}`;
+    const messageHtml = normalizedMessage
+      .split(/\r?\n/)
+      .map((line) => this.safeText(line))
+      .join("<br />");
+
+    const subject = `${APP.NAME} contact form: ${normalizedSubject}`;
+    const html = this.wrapTemplate(
+      `
+      <p>A new message was submitted from the public website contact form.</p>
+      <p><strong>Name:</strong> ${this.safeText(senderName)}</p>
+      <p><strong>Email:</strong> ${this.safeText(senderEmail)}</p>
+      <p><strong>Subject:</strong> ${this.safeText(normalizedSubject)}</p>
+      <p><strong>Message:</strong></p>
+      <p>${messageHtml}</p>
+    `,
+      {
+        title: "New contact request",
+        ctaLabel: "Reply to sender",
+        ctaUrl: replyLink,
+        previewText: `Message from ${senderName}.`,
+      },
+    );
+
+    await this.send({
+      to: contactInbox,
+      subject,
+      html,
+      text: this.stripHtml(html),
+      replyTo: senderEmail,
+    });
+  }
+
   private async send(payload: BasicEmailPayload): Promise<void> {
     if (!this.enabled || !this.transporter) {
       if (this.provider === "postmark" && this.postmarkClient) {
@@ -805,8 +856,9 @@ export class EmailService {
       MessageStream: this.messageStream,
     };
 
-    if (this.replyTo) {
-      message.ReplyTo = this.replyTo;
+    const replyToAddress = payload.replyTo?.trim() || this.replyTo;
+    if (replyToAddress) {
+      message.ReplyTo = replyToAddress;
     }
 
     if (this.sandboxMode) {
@@ -829,7 +881,7 @@ export class EmailService {
     await this.transporter.sendMail({
       from,
       to: payload.to,
-      replyTo: this.replyTo,
+      replyTo: payload.replyTo?.trim() || this.replyTo,
       subject: payload.subject,
       html: payload.html,
       text: payload.text,

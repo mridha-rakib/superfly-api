@@ -2,6 +2,7 @@ import authRouter from "@/modules/auth/auth.route";
 import billingRouter from "@/modules/billing/billing.route";
 import cleaningServiceRouter from "@/modules/cleaning-service/cleaning-service.route";
 import cleaningReportRouter from "@/modules/cleaning-report/cleaning-report.route";
+import contactRouter from "@/modules/contact/contact.route";
 import dashboardRouter from "@/modules/dashboard/dashboard.route";
 import quoteRouter from "@/modules/quote/quote.route";
 import reviewRouter from "@/modules/review/review.route";
@@ -23,6 +24,10 @@ const moduleRoutes = [
   {
     path: "/dashboard",
     route: dashboardRouter,
+  },
+  {
+    path: "/contact",
+    route: contactRouter,
   },
   {
     path: "/services",
