@@ -101,6 +101,13 @@ type CleanerBookingClosedNotificationPayload = {
   businessAddress?: string;
 };
 
+type EmailTemplateOptions = {
+  title?: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
+  previewText?: string;
+};
+
 export class EmailService {
   private provider: "postmark" | "smtp" | "disabled";
   private transporter?: Transporter;
@@ -196,7 +203,12 @@ export class EmailService {
       <p>Your ${this.safeText(payload.userType)} account is ready.</p>
       <p>You can log in here: <a href="${payload.loginLink}">${payload.loginLink}</a></p>
       <p>If you did not create this account, please contact support.</p>
-    `);
+    `, {
+      title: `Welcome to ${APP.NAME}`,
+      ctaLabel: "Log in now",
+      ctaUrl: payload.loginLink,
+      previewText: "Your account is ready to use.",
+    });
 
     await this.send({
       to: payload.to,
@@ -218,7 +230,12 @@ export class EmailService {
       <p>Your password reset code is: <strong>${otp}</strong></p>
       <p>This code expires in ${expiresInMinutes} minutes.</p>
       <p>If you did not request this, you can ignore this email.</p>
-    `);
+    `, {
+      title: "Password reset code",
+      ctaLabel: "Reset password",
+      ctaUrl: `${env.CLIENT_URL}/forgot-password`,
+      previewText: `Your reset code is ${otp}.`,
+    });
 
     await this.send({
       to,
@@ -237,7 +254,12 @@ export class EmailService {
       <p>Hi ${this.safeText(userName)},</p>
       <p>Your password has been reset successfully.</p>
       <p>If you did not perform this action, please contact support immediately.</p>
-    `);
+    `, {
+      title: "Password reset successful",
+      ctaLabel: "Sign in",
+      ctaUrl: `${env.CLIENT_URL}/login`,
+      previewText: "Your password was reset successfully.",
+    });
 
     await this.send({
       to,
@@ -255,7 +277,12 @@ export class EmailService {
       <p>Hi ${this.safeText(payload.userName)},</p>
       <p>Your password was changed on ${payload.changedAt.toISOString()}.</p>
       <p>If you did not perform this action, please contact support immediately.</p>
-    `);
+    `, {
+      title: "Password changed",
+      ctaLabel: "Review account",
+      ctaUrl: `${env.CLIENT_URL}/login`,
+      previewText: "A password change was detected on your account.",
+    });
 
     await this.send({
       to: payload.to,
@@ -278,7 +305,12 @@ export class EmailService {
       )}</strong></p>
       <p>Please log in and change your password right away:</p>
       <p><a href="${loginLink}">${loginLink}</a></p>
-    `);
+    `, {
+      title: "Your account credentials",
+      ctaLabel: "Log in and update password",
+      ctaUrl: loginLink,
+      previewText: "Your account is ready and includes a temporary password.",
+    });
 
     await this.send({
       to: payload.to,
@@ -316,7 +348,12 @@ export class EmailService {
           : ""
       }
       <p>Please plan to arrive on time and follow any site instructions.</p>
-    `);
+    `, {
+      title: "Upcoming job reminder",
+      ctaLabel: "View my jobs",
+      ctaUrl: `${env.CLIENT_URL}/my-jobs`,
+      previewText: `Reminder: ${payload.serviceType} job in 24 hours.`,
+    });
 
     await this.send({
       to: payload.to,
@@ -355,7 +392,12 @@ export class EmailService {
       }
       <p>You can track updates from your dashboard:</p>
       <p><a href="${bookingLink}">${bookingLink}</a></p>
-    `);
+    `, {
+      title: "Booking confirmed",
+      ctaLabel: "View booking",
+      ctaUrl: bookingLink,
+      previewText: `Your booking #${payload.bookingId} is confirmed.`,
+    });
 
     await this.send({
       to: payload.to,
@@ -404,7 +446,14 @@ export class EmailService {
       }
       <p>Open your jobs page for details:</p>
       <p><a href="${jobsLink}">${jobsLink}</a></p>
-    `);
+    `, {
+      title: isReassignment ? "Assignment updated" : "New assignment",
+      ctaLabel: "Open job details",
+      ctaUrl: jobsLink,
+      previewText: `Booking #${payload.bookingId} has been ${
+        isReassignment ? "reassigned" : "assigned"
+      } to you.`,
+    });
 
     await this.send({
       to: payload.to,
@@ -459,7 +508,12 @@ export class EmailService {
       }
       <p>You can view your booking details here:</p>
       <p><a href="${bookingLink}">${bookingLink}</a></p>
-    `);
+    `, {
+      title: isReassignment ? "Cleaner assignment updated" : "Cleaner assigned",
+      ctaLabel: "View booking details",
+      ctaUrl: bookingLink,
+      previewText: `Update for booking #${payload.bookingId}.`,
+    });
 
     await this.send({
       to: payload.to,
@@ -500,7 +554,12 @@ export class EmailService {
       }
       <p>You can check your jobs page for details:</p>
       <p><a href="${jobsLink}">${jobsLink}</a></p>
-    `);
+    `, {
+      title: "Booking closed",
+      ctaLabel: "Review job details",
+      ctaUrl: jobsLink,
+      previewText: `Booking #${payload.bookingId} has been marked closed.`,
+    });
 
     await this.send({
       to: payload.to,
@@ -539,75 +598,167 @@ export class EmailService {
       )} account:</p>
       <p><strong>${code}</strong></p>
       <p>This code expires in ${expiresIn} minutes.</p>
-    `);
+    `, {
+      title: "Verify your email",
+      ctaLabel: "Open verification page",
+      ctaUrl: `${env.CLIENT_URL}/verify-email`,
+      previewText: `Your verification code is ${code}.`,
+    });
   }
 
-  private wrapTemplate(content: string): string {
+  private wrapTemplate(
+    content: string,
+    options: EmailTemplateOptions = {},
+  ): string {
     const companyName = this.safeText(APP.NAME);
     const brandColor = this.resolveBrandColor();
+    const title = this.safeText(options.title || `${APP.NAME} notification`);
+    const previewText = this.safeText(
+      options.previewText || `${APP.NAME} account update`,
+    );
+    const ctaLabel = this.safeText(options.ctaLabel || "Open dashboard");
+    const ctaUrl = this.safeText(
+      options.ctaUrl?.trim() || env.CLIENT_URL?.trim() || "#",
+    );
 
     return `
-      <div style="margin:0; padding:24px; background-color:#f3f4f6;">
-        <div style="max-width:640px; margin:0 auto; background-color:#ffffff; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden; font-family:Arial, sans-serif; color:#111827;">
-          ${this.buildTemplateHeader(companyName, brandColor)}
-          <div style="padding:24px;">
-            <div style="font-size:14px; line-height:1.6; color:#111827;">
-              ${content}
-            </div>
-          </div>
-          ${this.buildTemplateFooter(companyName, brandColor)}
-        </div>
-      </div>
+      <!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <meta name="x-apple-disable-message-reformatting" />
+          <title>${title}</title>
+          <style>
+            body {
+              margin: 0;
+              padding: 0;
+            }
+            table {
+              border-spacing: 0;
+              border-collapse: collapse;
+            }
+            img {
+              border: 0;
+              outline: none;
+              text-decoration: none;
+            }
+            @media screen and (max-width: 620px) {
+              .email-content {
+                padding: 8px 22px 24px !important;
+              }
+              .email-content h1 {
+                font-size: 26px !important;
+              }
+              .email-divider {
+                padding: 0 22px !important;
+              }
+              .email-footer {
+                padding: 20px 22px 24px !important;
+              }
+            }
+          </style>
+        </head>
+        <body style="margin:0; padding:0; background-color:#f3f4f6;">
+          <span style="display:none!important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden;">
+            ${previewText}
+          </span>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;">
+            <tr>
+              <td align="center" style="padding:24px 12px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px; background-color:#ffffff; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden;">
+                  <tr>
+                    <td align="center" style="padding:28px 28px 10px; font-family:Arial, sans-serif;">
+                      ${this.buildTemplateHeader(companyName)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="email-content" style="padding:8px 36px 28px; font-family:Arial, sans-serif; color:#111827;">
+                      <h1 style="margin:0 0 18px; font-size:32px; line-height:1.2; font-weight:700; color:#111827; text-align:center;">
+                        ${title}
+                      </h1>
+                      <div style="font-size:15px; line-height:1.7; color:#374151;">
+                        ${content}
+                      </div>
+                      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:26px auto 0;">
+                        <tr>
+                          <td align="center" style="border-radius:10px; background-color:${brandColor};">
+                            <a href="${ctaUrl}" style="display:inline-block; padding:14px 24px; font-size:15px; line-height:1; font-weight:700; color:#ffffff; text-decoration:none; border-radius:10px;">
+                              ${ctaLabel}
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="email-divider" style="padding:0 36px;">
+                      <div style="height:1px; background-color:#e5e7eb; font-size:1px; line-height:1px;">&nbsp;</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="email-footer" style="padding:20px 36px 24px; font-family:Arial, sans-serif;">
+                      ${this.buildTemplateFooter(companyName, brandColor)}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
     `;
   }
 
-  private buildTemplateHeader(companyName: string, brandColor: string): string {
-    const logoMarkup = this.logoUrl?.trim()
-      ? `
-          <img
-            src="${this.safeText(this.logoUrl.trim())}"
-            alt="${companyName} logo"
-            style="display:block; max-width:52px; max-height:52px; width:auto; height:auto; border-radius:8px; background:#ffffff; padding:6px;"
-          />
-        `
-      : "";
+  private buildTemplateHeader(companyName: string): string {
+    if (this.logoUrl?.trim()) {
+      return `
+        <img
+          src="${this.safeText(this.logoUrl.trim())}"
+          alt="${companyName} logo"
+          style="display:block; margin:0 auto; max-width:160px; width:100%; height:auto;"
+        />
+      `;
+    }
 
     return `
-      <div style="padding:20px 24px; background:linear-gradient(135deg, ${brandColor} 0%, #111827 100%);">
-        <div style="display:flex; align-items:center; gap:12px;">
-          ${logoMarkup}
-          <div>
-            <p style="margin:0; font-size:12px; line-height:1.2; color:#ffffffCC; text-transform:uppercase; letter-spacing:0.08em;">
-              ${this.safeText(this.fromName || "Company")}
-            </p>
-            <p style="margin:4px 0 0; font-size:20px; line-height:1.3; font-weight:700; color:#ffffff;">
-              ${companyName}
-            </p>
-          </div>
-        </div>
-      </div>
+      <p style="margin:0; font-size:20px; font-weight:700; line-height:1.3; color:#111827; text-align:center;">
+        ${companyName}
+      </p>
     `;
   }
 
   private buildTemplateFooter(companyName: string, brandColor: string): string {
-    const replyToLine = this.replyTo?.trim()
-      ? `<p style="margin:0 0 8px;">Questions? Reply to <a href="mailto:${this.safeText(
-          this.replyTo.trim(),
-        )}" style="color:${brandColor}; text-decoration:none;">${this.safeText(this.replyTo.trim())}</a></p>`
-      : "";
+    const contactEmail = this.resolveContactEmail();
 
     return `
-      <div style="padding:20px 24px; background-color:#f9fafb; border-top:1px solid #e5e7eb;">
-        <p style="margin:0 0 8px; font-size:13px; line-height:1.5; color:#374151;">
-          Thanks,<br />
-          The ${companyName} team
-        </p>
-        ${replyToLine}
-        <p style="margin:0; font-size:12px; line-height:1.5; color:#6b7280;">
-          © ${new Date().getFullYear()} ${companyName}. All rights reserved.
-        </p>
-      </div>
+      <p style="margin:0 0 8px; font-size:14px; line-height:1.4; font-weight:700; color:#111827;">
+        ${companyName}
+      </p>
+      <p style="margin:0 0 8px; font-size:13px; line-height:1.5; color:#4b5563;">
+        Contact email:
+        <a href="mailto:${this.safeText(contactEmail)}" style="color:${brandColor}; text-decoration:none;">
+          ${this.safeText(contactEmail)}
+        </a>
+      </p>
+      <p style="margin:0; font-size:12px; line-height:1.5; color:#6b7280;">
+        &copy; ${new Date().getFullYear()} ${companyName}. All rights reserved.
+      </p>
     `;
+  }
+
+  private resolveContactEmail(): string {
+    const replyTo = this.replyTo?.trim();
+    if (replyTo) {
+      return replyTo;
+    }
+
+    const fromAddress = this.fromAddress?.trim();
+    if (fromAddress) {
+      return fromAddress;
+    }
+
+    return "support@example.com";
   }
 
   private resolveBrandColor(): string {
