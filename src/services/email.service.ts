@@ -663,6 +663,7 @@ export class EmailService {
   ): string {
     const companyName = this.safeText(APP.NAME);
     const brandColor = this.resolveBrandColor();
+    const clientBaseUrl = this.resolveClientBaseUrl();
     const title = this.safeText(options.title || `${APP.NAME} notification`);
     const previewText = this.safeText(
       options.previewText || `${APP.NAME} account update`,
@@ -695,11 +696,17 @@ export class EmailService {
               text-decoration: none;
             }
             @media screen and (max-width: 620px) {
-              .email-content {
-                padding: 8px 22px 24px !important;
+              .email-shell {
+                padding: 18px 10px !important;
               }
-              .email-content h1 {
-                font-size: 26px !important;
+              .email-header {
+                padding: 24px 18px !important;
+              }
+              .email-header h1 {
+                font-size: 30px !important;
+              }
+              .email-content {
+                padding: 22px 22px 24px !important;
               }
               .email-divider {
                 padding: 0 22px !important;
@@ -716,18 +723,15 @@ export class EmailService {
           </span>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;">
             <tr>
-              <td align="center" style="padding:24px 12px;">
+              <td class="email-shell" align="center" style="padding:24px 12px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px; background-color:#ffffff; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden;">
                   <tr>
-                    <td align="center" style="padding:28px 28px 10px; font-family:Arial, sans-serif;">
-                      ${this.buildTemplateHeader(companyName)}
+                    <td class="email-header" align="center" style="padding:30px 28px 26px; background-color:${brandColor}; font-family:Arial, sans-serif;">
+                      ${this.buildTemplateHeader(companyName, title, brandColor)}
                     </td>
                   </tr>
                   <tr>
-                    <td class="email-content" style="padding:8px 36px 28px; font-family:Arial, sans-serif; color:#111827;">
-                      <h1 style="margin:0 0 18px; font-size:32px; line-height:1.2; font-weight:700; color:#111827; text-align:center;">
-                        ${title}
-                      </h1>
+                    <td class="email-content" style="padding:24px 36px 28px; font-family:Arial, sans-serif; color:#111827;">
                       <div style="font-size:15px; line-height:1.7; color:#374151;">
                         ${content}
                       </div>
@@ -748,8 +752,8 @@ export class EmailService {
                     </td>
                   </tr>
                   <tr>
-                    <td class="email-footer" style="padding:20px 36px 24px; font-family:Arial, sans-serif;">
-                      ${this.buildTemplateFooter(companyName, brandColor)}
+                    <td class="email-footer" style="padding:20px 36px 24px; font-family:Arial, sans-serif; background-color:#f9fafb;">
+                      ${this.buildTemplateFooter(companyName, brandColor, clientBaseUrl)}
                     </td>
                   </tr>
                 </table>
@@ -761,39 +765,62 @@ export class EmailService {
     `;
   }
 
-  private buildTemplateHeader(companyName: string): string {
-    if (this.logoUrl?.trim()) {
-      return `
+  private buildTemplateHeader(
+    companyName: string,
+    title: string,
+    brandColor: string,
+  ): string {
+    const logoMarkup = this.logoUrl?.trim()
+      ? `
         <img
           src="${this.safeText(this.logoUrl.trim())}"
           alt="${companyName} logo"
-          style="display:block; margin:0 auto; max-width:160px; width:100%; height:auto;"
+          style="display:block; margin:0 auto 14px; max-width:160px; max-height:56px; width:auto; height:auto;"
         />
+      `
+      : `
+        <p style="margin:0 0 14px; font-size:15px; line-height:1.4; font-weight:700; color:#ffffff; letter-spacing:0.02em;">
+          ${companyName}
+        </p>
       `;
-    }
 
     return `
-      <p style="margin:0; font-size:20px; font-weight:700; line-height:1.3; color:#111827; text-align:center;">
-        ${companyName}
-      </p>
+      <div style="text-align:center;">
+        ${logoMarkup}
+        <h1 style="margin:0; font-size:40px; line-height:1.15; font-weight:700; color:#ffffff;">
+          ${title}
+        </h1>
+      </div>
     `;
   }
 
-  private buildTemplateFooter(companyName: string, brandColor: string): string {
+  private buildTemplateFooter(
+    companyName: string,
+    brandColor: string,
+    clientBaseUrl: string,
+  ): string {
     const contactEmail = this.resolveContactEmail();
+    const contactUrl = clientBaseUrl ? `${clientBaseUrl}/contact` : "#";
+    const privacyUrl = clientBaseUrl ? `${clientBaseUrl}/privacy-policy` : "#";
+    const termsUrl = clientBaseUrl
+      ? `${clientBaseUrl}/terms-and-conditions`
+      : "#";
 
     return `
-      <p style="margin:0 0 8px; font-size:14px; line-height:1.4; font-weight:700; color:#111827;">
-        ${companyName}
+      <p style="margin:0 0 8px; font-size:14px; line-height:1.5; color:#6b7280; text-align:center;">
+        &copy; ${new Date().getFullYear()} ${companyName}. All rights reserved.
       </p>
-      <p style="margin:0 0 8px; font-size:13px; line-height:1.5; color:#4b5563;">
-        Contact email:
-        <a href="mailto:${this.safeText(contactEmail)}" style="color:${brandColor}; text-decoration:none;">
-          ${this.safeText(contactEmail)}
+      <p style="margin:0 0 10px; font-size:14px; line-height:1.5; text-align:center;">
+        <a href="mailto:${this.safeText(contactEmail)}" style="color:${brandColor}; text-decoration:none; font-weight:600;">
+          Contact Support
         </a>
       </p>
-      <p style="margin:0; font-size:12px; line-height:1.5; color:#6b7280;">
-        &copy; ${new Date().getFullYear()} ${companyName}. All rights reserved.
+      <p style="margin:0; font-size:14px; line-height:1.6; text-align:center;">
+        <a href="${this.safeText(contactUrl)}" style="color:${brandColor}; text-decoration:none;">Contact Us</a>
+        <span style="color:#9ca3af;"> | </span>
+        <a href="${this.safeText(privacyUrl)}" style="color:${brandColor}; text-decoration:none;">Privacy Policy</a>
+        <span style="color:#9ca3af;"> | </span>
+        <a href="${this.safeText(termsUrl)}" style="color:${brandColor}; text-decoration:none;">Terms and Conditions</a>
       </p>
     `;
   }
@@ -812,9 +839,14 @@ export class EmailService {
     return "support@example.com";
   }
 
+  private resolveClientBaseUrl(): string {
+    const url = env.CLIENT_URL?.trim() || "";
+    return url.replace(/\/+$/, "");
+  }
+
   private resolveBrandColor(): string {
     const color = this.brandColor?.trim();
-    return color || "#111827";
+    return color || "#C85344";
   }
 
   private safeText(value: string): string {
