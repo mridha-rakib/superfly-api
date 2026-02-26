@@ -346,6 +346,19 @@ export class UserService {
     await this.userRepository.deleteAllRefreshTokens(userId);
   }
 
+  async isRefreshTokenRevoked(token: string): Promise<boolean> {
+    return this.userRepository.isRefreshTokenRevoked(token);
+  }
+
+  async blacklistRefreshToken(data: {
+    userId: string;
+    token: string;
+    expiresAt: Date;
+    reason?: "logout" | "password_change" | "security_incident" | "admin_action";
+  }): Promise<void> {
+    await this.userRepository.blacklistRefreshToken(data);
+  }
+
   async notifyPasswordChange(
     email: string,
     fullName: string,

@@ -1,10 +1,11 @@
 // file: src/middlewares/auth.middleware.ts
 
-import { MESSAGES } from "@/constants/app.constants";
+import { ACCOUNT_STATUS, MESSAGES } from "@/constants/app.constants";
 import { ErrorCodeEnum } from "@/enums/error-code.enum";
 
 import { logger } from "@/middlewares/pino-logger";
 import { AuthUtil } from "@/modules/auth/auth.utils";
+import { UserService } from "@/modules/user/user.service";
 import {
   ForbiddenException,
   UnauthorizedException,
@@ -32,7 +33,13 @@ declare global {
 }
 
 export class AuthMiddleware {
-  static verifyToken = (req: Request, res: Response, next: NextFunction) => {
+  private static userService = new UserService();
+
+  static verifyToken = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
     try {
       const authHeader = req.get("Authorization") || req.get("authorization");
       const requestId = req.id || req.headers["x-request-id"];
@@ -51,13 +58,42 @@ export class AuthMiddleware {
       const token = authHeader.substring(7);
 
       const payload = AuthUtil.verifyAccessToken(token);
+      const user = await AuthMiddleware.userService.getById(payload.userId);
+
+      if (!user) {
+        throw new UnauthorizedException(
+          "Authentication failed. User no longer exists.",
+          ErrorCodeEnum.AUTH_UNAUTHORIZED_ACCESS,
+        );
+      }
+
+      if (!user.emailVerified) {
+        throw new UnauthorizedException(
+          MESSAGES.AUTH.EMAIL_NOT_VERIFIED,
+          ErrorCodeEnum.AUTH_UNAUTHORIZED_ACCESS,
+        );
+      }
+
+      if (user.accountStatus === ACCOUNT_STATUS.SUSPENDED) {
+        throw new UnauthorizedException(
+          MESSAGES.AUTH.ACCOUNT_SUSPENDED,
+          ErrorCodeEnum.AUTH_UNAUTHORIZED_ACCESS,
+        );
+      }
+
+      if (user.accountStatus !== ACCOUNT_STATUS.ACTIVE) {
+        throw new UnauthorizedException(
+          MESSAGES.AUTH.ACCOUNT_INACTIVE,
+          ErrorCodeEnum.AUTH_UNAUTHORIZED_ACCESS,
+        );
+      }
 
       req.user = {
-        userId: payload.userId,
-        email: payload.email,
-        role: payload.role,
-        accountStatus: payload.accountStatus,
-        emailVerified: payload.emailVerified,
+        userId: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        accountStatus: user.accountStatus,
+        emailVerified: user.emailVerified,
         iat: payload.iat,
         exp: payload.exp,
       };
@@ -100,25 +136,34 @@ export class AuthMiddleware {
     };
   };
 
-  static optionalAuth = (req: Request, res: Response, next: NextFunction) => {
+  static optionalAuth = async (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
     try {
       const authHeader = req.get("Authorization") || req.get("authorization");
 
       if (authHeader && authHeader.startsWith("Bearer ")) {
         const token = authHeader.substring(7);
         const payload = AuthUtil.verifyAccessToken(token);
+        const user = await AuthMiddleware.userService.getById(payload.userId);
+
+        if (!user || !user.emailVerified || user.accountStatus !== ACCOUNT_STATUS.ACTIVE) {
+          return next();
+        }
 
         req.user = {
-          userId: payload.userId,
-          email: payload.email,
-          role: payload.role,
-          accountStatus: payload.accountStatus,
-          emailVerified: payload.emailVerified,
+          userId: user._id.toString(),
+          email: user.email,
+          role: user.role,
+          accountStatus: user.accountStatus,
+          emailVerified: user.emailVerified,
           iat: payload.iat,
           exp: payload.exp,
         };
 
-        logger.debug({ userId: payload.userId }, "Optional token verified");
+        logger.debug({ userId: user._id.toString() }, "Optional token verified");
       }
 
       next();

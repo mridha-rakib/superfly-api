@@ -129,9 +129,18 @@ export class AuthController {
         throw new UnauthorizedException("Refresh token not found");
       }
 
-      const result = await this.authService.refreshAccessToken(refreshToken);
-
-      ApiResponse.success(res, result);
+      try {
+        const result = await this.authService.refreshAccessToken(refreshToken);
+        ApiResponse.success(res, result);
+      } catch (error) {
+        res.clearCookie(COOKIE_CONFIG.REFRESH_TOKEN.name, {
+          httpOnly: true,
+          secure: COOKIE_CONFIG.REFRESH_TOKEN.options.secure,
+          sameSite: COOKIE_CONFIG.REFRESH_TOKEN.options.sameSite,
+          path: "/",
+        });
+        throw error;
+      }
     }
   );
 

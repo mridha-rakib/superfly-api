@@ -313,24 +313,52 @@ export class AuthService {
   async refreshAccessToken(
     refreshToken: string,
   ): Promise<{ accessToken: string }> {
+    let payload: { userId?: string; exp?: number } | null = null;
+
     try {
-      const payload = AuthUtil.verifyRefreshToken(refreshToken);
+      payload = AuthUtil.verifyRefreshToken(refreshToken);
+
+      const isTokenRevoked =
+        await this.userService.isRefreshTokenRevoked(refreshToken);
+      if (isTokenRevoked) {
+        throw new UnauthorizedException(MESSAGES.AUTH.REFRESH_TOKEN_INVALID);
+      }
+
+      if (!payload.userId) {
+        throw new UnauthorizedException(MESSAGES.AUTH.REFRESH_TOKEN_INVALID);
+      }
 
       const user = await this.userService.getById(payload.userId);
 
       if (!user) {
+        await this.revokeRefreshToken(refreshToken, payload, "admin_action");
         throw new UnauthorizedException(MESSAGES.AUTH.REFRESH_TOKEN_INVALID);
       }
 
       if (!user.emailVerified) {
+        await this.revokeRefreshToken(
+          refreshToken,
+          payload,
+          "security_incident",
+        );
         throw new UnauthorizedException(MESSAGES.AUTH.EMAIL_NOT_VERIFIED);
       }
 
       if (user.accountStatus === ACCOUNT_STATUS.SUSPENDED) {
+        await this.revokeRefreshToken(
+          refreshToken,
+          payload,
+          "security_incident",
+        );
         throw new UnauthorizedException(MESSAGES.AUTH.ACCOUNT_SUSPENDED);
       }
 
       if (user.accountStatus !== ACCOUNT_STATUS.ACTIVE) {
+        await this.revokeRefreshToken(
+          refreshToken,
+          payload,
+          "security_incident",
+        );
         throw new UnauthorizedException(MESSAGES.AUTH.ACCOUNT_INACTIVE);
       }
 
@@ -344,6 +372,9 @@ export class AuthService {
 
       return { accessToken };
     } catch (error) {
+      if (payload?.userId) {
+        await this.revokeRefreshToken(refreshToken, payload, "admin_action");
+      }
       throw new UnauthorizedException(MESSAGES.AUTH.REFRESH_TOKEN_INVALID);
     }
   }
@@ -371,6 +402,32 @@ export class AuthService {
       refreshToken,
       expiresIn: AUTH.ACCESS_TOKEN_EXPIRY,
     };
+  }
+
+  private async revokeRefreshToken(
+    token: string,
+    payload?: { userId?: string; exp?: number } | null,
+    reason: "logout" | "password_change" | "security_incident" | "admin_action" = "admin_action",
+  ): Promise<void> {
+    if (!payload?.userId || !token) return;
+
+    const expiresAt = payload.exp
+      ? new Date(payload.exp * 1000)
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    try {
+      await this.userService.blacklistRefreshToken({
+        userId: payload.userId,
+        token,
+        expiresAt,
+        reason,
+      });
+    } catch (error) {
+      logger.warn(
+        { userId: payload.userId, error },
+        "Failed to blacklist refresh token",
+      );
+    }
   }
 
   /**

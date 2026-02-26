@@ -124,4 +124,31 @@ export class UserRepository extends BaseRepository<IUser> {
       throw error;
     }
   }
+
+  async isRefreshTokenRevoked(token: string): Promise<boolean> {
+    const exists = await RefreshTokenBlacklist.exists({ token });
+    return Boolean(exists);
+  }
+
+  async blacklistRefreshToken(data: {
+    userId: string;
+    token: string;
+    expiresAt: Date;
+    reason?: "logout" | "password_change" | "security_incident" | "admin_action";
+  }): Promise<void> {
+    const { userId, token, expiresAt, reason = "admin_action" } = data;
+
+    await RefreshTokenBlacklist.updateOne(
+      { token },
+      {
+        $setOnInsert: {
+          userId,
+          token,
+          expiresAt,
+          reason,
+        },
+      },
+      { upsert: true }
+    ).exec();
+  }
 }
