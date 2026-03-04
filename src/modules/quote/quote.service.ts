@@ -33,6 +33,16 @@ import type {
   QuoteResponse,
   QuoteStatusUpdatePayload,
 } from "./quote.type";
+import type {
+  QuoteCleaningSchedule,
+  QuoteCleaningScheduleMonthlySpecificDates,
+  QuoteCleaningScheduleMonthlyWeekdayPattern,
+  QuoteCleaningScheduleOneTime,
+  QuoteCleaningScheduleWeekly,
+  QuoteScheduleMonthWeek,
+  QuoteScheduleWeekday,
+} from "./quote-schedule.type";
+import { QUOTE_SCHEDULE_WEEKDAYS } from "./quote-schedule.type";
 
 type QuoteContact = {
   firstName?: string;
@@ -45,6 +55,16 @@ type QuoteRequestContact = {
   contactName?: string;
   email?: string;
   phoneNumber?: string;
+};
+
+const SCHEDULE_WEEKDAY_TO_INDEX: Record<QuoteScheduleWeekday, number> = {
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+  sunday: 0,
 };
 
 export class QuoteService {
@@ -575,9 +595,16 @@ export class QuoteService {
 
     const companyName = payload.companyName.trim();
     const businessAddress = payload.businessAddress.trim();
-    const serviceDate = payload.preferredDate.trim();
-    const preferredTime = normalizeTimeTo24Hour(payload.preferredTime);
+    const cleaningSchedule = this.normalizeCleaningSchedule(
+      payload.cleaningSchedule,
+    );
+    const resolvedPrimarySchedule = this.resolvePrimarySchedule(
+      cleaningSchedule,
+      payload.preferredDate,
+      payload.preferredTime,
+    );
     const cleaningFrequency = this.normalizeCleaningFrequency(
+      cleaningSchedule?.frequency,
       payload.cleaningFrequency,
     );
     const notes = payload.specialRequest?.trim() || undefined;
@@ -616,14 +643,15 @@ export class QuoteService {
       phoneNumber: contact.phoneNumber!,
       companyName,
       businessAddress,
-      serviceDate,
-      preferredTime,
+      serviceDate: resolvedPrimarySchedule.serviceDate,
+      preferredTime: resolvedPrimarySchedule.preferredTime,
       notes,
       totalPrice: Number.isFinite(totalPrice) ? totalPrice : undefined,
       cleanerEarningAmount: Number.isFinite(cleanerPrice)
         ? cleanerPrice
         : undefined,
       cleaningFrequency,
+      cleaningSchedule,
       squareFoot:
         payload.squareFoot !== undefined && payload.squareFoot !== null
           ? Number(payload.squareFoot)
@@ -1653,8 +1681,18 @@ export class QuoteService {
     );
   }
 
-  private normalizeCleaningFrequency(value?: string): string {
-    const normalized = (value || "")
+  private normalizeCleaningFrequency(
+    scheduleFrequency?: QuoteCleaningSchedule["frequency"],
+    fallbackValue?: string,
+  ): string {
+    if (scheduleFrequency === "one_time") {
+      return "one-time";
+    }
+    if (scheduleFrequency === "weekly" || scheduleFrequency === "monthly") {
+      return scheduleFrequency;
+    }
+
+    const normalized = (fallbackValue || "")
       .trim()
       .toLowerCase()
       .replace(/[_\s]+/g, "-");
@@ -1668,6 +1706,413 @@ export class QuoteService {
     }
 
     return "one-time";
+  }
+
+  private normalizeCleaningSchedule(
+    schedule?: QuoteCleaningSchedule,
+  ): QuoteCleaningSchedule | undefined {
+    if (!schedule) {
+      return undefined;
+    }
+
+    if (schedule.frequency === "one_time") {
+      const date = schedule.schedule.date.trim();
+      const start_time = this.normalizeAndValidateTime(schedule.schedule.start_time);
+      const end_time = this.normalizeAndValidateTime(schedule.schedule.end_time);
+      this.ensureDateString(date, "Schedule date");
+      this.ensureEndAfterStart(start_time, end_time);
+
+      return {
+        frequency: "one_time",
+        schedule: {
+          date,
+          start_time,
+          end_time,
+        },
+      };
+    }
+
+    if (schedule.frequency === "weekly") {
+      const days = Array.from(
+        new Set(
+          schedule.days
+            .map((day) => day.trim().toLowerCase() as QuoteScheduleWeekday)
+            .filter((day) => QUOTE_SCHEDULE_WEEKDAYS.includes(day)),
+        ),
+      );
+      if (!days.length) {
+        throw new BadRequestException("At least one weekday is required");
+      }
+
+      const start_time = this.normalizeAndValidateTime(schedule.start_time);
+      const end_time = this.normalizeAndValidateTime(schedule.end_time);
+      this.ensureEndAfterStart(start_time, end_time);
+      const repeat_until = schedule.repeat_until?.trim() || undefined;
+      if (repeat_until) {
+        this.ensureDateString(repeat_until, "Repeat until date");
+      }
+
+      return {
+        frequency: "weekly",
+        days,
+        start_time,
+        end_time,
+        repeat_until,
+      };
+    }
+
+    if (schedule.pattern_type === "specific_dates") {
+      const dates = Array.from(
+        new Set(
+          schedule.dates
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 1 && value <= 31),
+        ),
+      ).sort((a, b) => a - b);
+      if (!dates.length) {
+        throw new BadRequestException(
+          "At least one monthly date between 1 and 31 is required",
+        );
+      }
+
+      const start_time = this.normalizeAndValidateTime(schedule.start_time);
+      const end_time = this.normalizeAndValidateTime(schedule.end_time);
+      this.ensureEndAfterStart(start_time, end_time);
+
+      return {
+        frequency: "monthly",
+        pattern_type: "specific_dates",
+        dates,
+        start_time,
+        end_time,
+      };
+    }
+
+    const week = schedule.week.trim().toLowerCase() as QuoteScheduleMonthWeek;
+    const day = schedule.day.trim().toLowerCase() as QuoteScheduleWeekday;
+    if (!["first", "second", "third", "fourth", "last"].includes(week)) {
+      throw new BadRequestException("Invalid monthly week pattern");
+    }
+    if (!QUOTE_SCHEDULE_WEEKDAYS.includes(day)) {
+      throw new BadRequestException("Invalid monthly weekday pattern");
+    }
+
+    const start_time = this.normalizeAndValidateTime(schedule.start_time);
+    const end_time = this.normalizeAndValidateTime(schedule.end_time);
+    this.ensureEndAfterStart(start_time, end_time);
+
+    return {
+      frequency: "monthly",
+      pattern_type: "weekday_pattern",
+      week,
+      day,
+      start_time,
+      end_time,
+    };
+  }
+
+  private resolvePrimarySchedule(
+    schedule: QuoteCleaningSchedule | undefined,
+    preferredDate?: string,
+    preferredTime?: string,
+  ): { serviceDate: string; preferredTime: string } {
+    if (schedule) {
+      const resolved = this.resolvePrimaryScheduleFromConfig(schedule, new Date());
+      if (!resolved) {
+        throw new BadRequestException("Could not derive a valid primary schedule");
+      }
+      return resolved;
+    }
+
+    const serviceDate = preferredDate?.trim() || "";
+    const normalizedPreferredTime = this.normalizeAndValidateTime(preferredTime || "");
+    this.ensureDateString(serviceDate, "Preferred date");
+
+    return {
+      serviceDate,
+      preferredTime: normalizedPreferredTime,
+    };
+  }
+
+  private resolvePrimaryScheduleFromConfig(
+    schedule: QuoteCleaningSchedule,
+    now: Date,
+  ): { serviceDate: string; preferredTime: string } | null {
+    if (schedule.frequency === "one_time") {
+      return {
+        serviceDate: schedule.schedule.date,
+        preferredTime: schedule.schedule.start_time,
+      };
+    }
+
+    if (schedule.frequency === "weekly") {
+      const date = this.findNextWeeklyDate(schedule, now);
+      if (!date) {
+        return null;
+      }
+      return {
+        serviceDate: date,
+        preferredTime: schedule.start_time,
+      };
+    }
+
+    if (schedule.pattern_type === "specific_dates") {
+      const date = this.findNextMonthlySpecificDate(schedule, now);
+      if (!date) {
+        return null;
+      }
+      return {
+        serviceDate: date,
+        preferredTime: schedule.start_time,
+      };
+    }
+
+    const date = this.findNextMonthlyWeekdayPatternDate(schedule, now);
+    if (!date) {
+      return null;
+    }
+
+    return {
+      serviceDate: date,
+      preferredTime: schedule.start_time,
+    };
+  }
+
+  private findNextWeeklyDate(
+    schedule: QuoteCleaningScheduleWeekly,
+    now: Date,
+  ): string | null {
+    const daySet = new Set(schedule.days);
+    const repeatUntil = schedule.repeat_until
+      ? this.parseDateString(schedule.repeat_until)
+      : null;
+    const repeatUntilEnd = repeatUntil
+      ? new Date(
+          repeatUntil.getFullYear(),
+          repeatUntil.getMonth(),
+          repeatUntil.getDate(),
+          23,
+          59,
+          59,
+          999,
+        )
+      : null;
+    const [hours, minutes] = schedule.start_time.split(":").map(Number);
+
+    for (let offset = 0; offset <= 370; offset += 1) {
+      const candidateDay = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + offset,
+      );
+      if (repeatUntilEnd && candidateDay > repeatUntilEnd) {
+        break;
+      }
+
+      const dayName = this.weekdayFromDate(candidateDay);
+      if (!daySet.has(dayName)) {
+        continue;
+      }
+
+      const occurrence = new Date(candidateDay);
+      occurrence.setHours(hours, minutes, 0, 0);
+      if (occurrence < now) {
+        continue;
+      }
+
+      return this.toDateString(candidateDay);
+    }
+
+    return null;
+  }
+
+  private findNextMonthlySpecificDate(
+    schedule: QuoteCleaningScheduleMonthlySpecificDates,
+    now: Date,
+  ): string | null {
+    const [hours, minutes] = schedule.start_time.split(":").map(Number);
+
+    for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
+      const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+      const year = monthRef.getFullYear();
+      const month = monthRef.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      for (const selectedDay of schedule.dates) {
+        if (selectedDay > daysInMonth) {
+          continue;
+        }
+
+        const candidate = new Date(year, month, selectedDay, hours, minutes, 0, 0);
+        if (candidate < now) {
+          continue;
+        }
+
+        return this.toDateString(candidate);
+      }
+    }
+
+    return null;
+  }
+
+  private findNextMonthlyWeekdayPatternDate(
+    schedule: QuoteCleaningScheduleMonthlyWeekdayPattern,
+    now: Date,
+  ): string | null {
+    const [hours, minutes] = schedule.start_time.split(":").map(Number);
+
+    for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
+      const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+      const year = monthRef.getFullYear();
+      const month = monthRef.getMonth();
+      const dayOfMonth = this.getWeekdayPatternDayOfMonth(
+        year,
+        month,
+        schedule.week,
+        schedule.day,
+      );
+
+      if (!dayOfMonth) {
+        continue;
+      }
+
+      const candidate = new Date(year, month, dayOfMonth, hours, minutes, 0, 0);
+      if (candidate < now) {
+        continue;
+      }
+
+      return this.toDateString(candidate);
+    }
+
+    return null;
+  }
+
+  private getWeekdayPatternDayOfMonth(
+    year: number,
+    month: number,
+    week: QuoteScheduleMonthWeek,
+    day: QuoteScheduleWeekday,
+  ): number | null {
+    const targetWeekday = SCHEDULE_WEEKDAY_TO_INDEX[day];
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    if (week === "last") {
+      const lastDayWeekday = new Date(year, month, daysInMonth).getDay();
+      const delta = (lastDayWeekday - targetWeekday + 7) % 7;
+      return daysInMonth - delta;
+    }
+
+    const firstDayWeekday = new Date(year, month, 1).getDay();
+    const offsetFromFirst = (targetWeekday - firstDayWeekday + 7) % 7;
+    const weekOffset =
+      week === "first"
+        ? 0
+        : week === "second"
+          ? 1
+          : week === "third"
+            ? 2
+            : 3;
+    const dayOfMonth = 1 + offsetFromFirst + weekOffset * 7;
+
+    if (dayOfMonth > daysInMonth) {
+      return null;
+    }
+
+    return dayOfMonth;
+  }
+
+  private normalizeAndValidateTime(value: string): string {
+    const normalized = normalizeTimeTo24Hour(value);
+    if (!/^\d{2}:\d{2}$/.test(normalized)) {
+      throw new BadRequestException("Time must be in HH:mm format");
+    }
+    return normalized;
+  }
+
+  private ensureEndAfterStart(startTime: string, endTime: string): void {
+    const start = this.timeToMinutes(startTime);
+    const end = this.timeToMinutes(endTime);
+    if (end <= start) {
+      throw new BadRequestException("End time must be after start time");
+    }
+  }
+
+  private ensureDateString(value: string, fieldName: string): void {
+    if (!this.isValidDateString(value)) {
+      throw new BadRequestException(`${fieldName} must be in YYYY-MM-DD format`);
+    }
+  }
+
+  private isValidDateString(value: string): boolean {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      return false;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(year, month - 1, day);
+
+    return (
+      !Number.isNaN(parsed.getTime()) &&
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day
+    );
+  }
+
+  private parseDateString(value: string): Date {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      throw new BadRequestException("Invalid date format");
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(year, month - 1, day);
+    if (
+      Number.isNaN(parsed.getTime()) ||
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() !== month - 1 ||
+      parsed.getDate() !== day
+    ) {
+      throw new BadRequestException("Invalid date value");
+    }
+
+    return parsed;
+  }
+
+  private timeToMinutes(value: string): number {
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
+  private weekdayFromDate(value: Date): QuoteScheduleWeekday {
+    switch (value.getDay()) {
+      case 1:
+        return "monday";
+      case 2:
+        return "tuesday";
+      case 3:
+        return "wednesday";
+      case 4:
+        return "thursday";
+      case 5:
+        return "friday";
+      case 6:
+        return "saturday";
+      default:
+        return "sunday";
+    }
+  }
+
+  private toDateString(value: Date): string {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   }
 
   private resolveRequestedServices(quote: IQuote): string[] {
@@ -1836,6 +2281,7 @@ export class QuoteService {
       cleanerPercentage,
       cleanerEarningAmount,
       cleaningFrequency: quote.cleaningFrequency,
+      cleaningSchedule: quote.cleaningSchedule,
       squareFoot: quote.squareFoot,
       cleaningServices: quote.cleaningServices,
       generalContractorName: quote.generalContractorName,

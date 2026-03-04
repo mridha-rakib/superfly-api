@@ -1,9 +1,16 @@
 import { QUOTE } from "@/constants/app.constants";
 import { z } from "zod";
+import {
+  QUOTE_SCHEDULE_MONTH_WEEKS,
+  QUOTE_SCHEDULE_WEEKDAYS,
+} from "./quote-schedule.type";
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_24H_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const serviceSelectionSchema = z.record(
   z.string().min(1),
-  z.coerce.number().int().min(0).default(0)
+  z.coerce.number().int().min(0).default(0),
 );
 
 const cleaningServiceOptions = z.enum([
@@ -21,34 +28,190 @@ const cleaningFrequencyOptions = z.enum([
   "monthly",
 ]);
 
+const scheduleWeekdayOptions = z.enum(QUOTE_SCHEDULE_WEEKDAYS);
+const scheduleMonthWeekOptions = z.enum(QUOTE_SCHEDULE_MONTH_WEEKS);
+
+const dateStringSchema = z
+  .string()
+  .trim()
+  .regex(DATE_PATTERN, "Date must be YYYY-MM-DD");
+const time24HourSchema = z
+  .string()
+  .trim()
+  .regex(TIME_24H_PATTERN, "Time must be HH:mm");
+
+const toMinutes = (value: string): number => {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+};
+
+const oneTimeCleaningScheduleSchema = z
+  .object({
+    frequency: z.literal("one_time"),
+    schedule: z.object({
+      date: dateStringSchema,
+      start_time: time24HourSchema,
+      end_time: time24HourSchema,
+    }),
+  })
+  .superRefine((data, ctx) => {
+    if (toMinutes(data.schedule.end_time) <= toMinutes(data.schedule.start_time)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule", "end_time"],
+        message: "End time must be after start time",
+      });
+    }
+  });
+
+const weeklyCleaningScheduleSchema = z
+  .object({
+    frequency: z.literal("weekly"),
+    days: z
+      .array(scheduleWeekdayOptions)
+      .min(1, "Select at least one weekday"),
+    start_time: time24HourSchema,
+    end_time: time24HourSchema,
+    repeat_until: dateStringSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (new Set(data.days).size !== data.days.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["days"],
+        message: "Weekdays must be unique",
+      });
+    }
+
+    if (toMinutes(data.end_time) <= toMinutes(data.start_time)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["end_time"],
+        message: "End time must be after start time",
+      });
+    }
+  });
+
+const monthlySpecificDatesCleaningScheduleSchema = z
+  .object({
+    frequency: z.literal("monthly"),
+    pattern_type: z.literal("specific_dates"),
+    dates: z
+      .array(z.coerce.number().int().min(1).max(31))
+      .min(1, "Select at least one date"),
+    start_time: time24HourSchema,
+    end_time: time24HourSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (new Set(data.dates).size !== data.dates.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dates"],
+        message: "Dates must be unique",
+      });
+    }
+
+    if (toMinutes(data.end_time) <= toMinutes(data.start_time)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["end_time"],
+        message: "End time must be after start time",
+      });
+    }
+  });
+
+const monthlyWeekdayPatternCleaningScheduleSchema = z
+  .object({
+    frequency: z.literal("monthly"),
+    pattern_type: z.literal("weekday_pattern"),
+    week: scheduleMonthWeekOptions,
+    day: scheduleWeekdayOptions,
+    start_time: time24HourSchema,
+    end_time: time24HourSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (toMinutes(data.end_time) <= toMinutes(data.start_time)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["end_time"],
+        message: "End time must be after start time",
+      });
+    }
+  });
+
+export const cleaningScheduleSchema = z.union([
+  oneTimeCleaningScheduleSchema,
+  weeklyCleaningScheduleSchema,
+  monthlySpecificDatesCleaningScheduleSchema,
+  monthlyWeekdayPatternCleaningScheduleSchema,
+]);
+
 const baseQuoteSchema = z.object({
   notes: z.string().max(500).optional(),
   services: serviceSelectionSchema.default({}),
   serviceDate: z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Service date must be YYYY-MM-DD"),
+    .regex(DATE_PATTERN, "Service date must be YYYY-MM-DD"),
   preferredTime: z.string().trim().min(1).max(60),
   paymentFlow: z.enum(["checkout", "intent"]).optional(),
 });
 
-const baseServiceRequestSchema = z.object({
-  companyName: z.string().trim().min(1).max(150),
-  businessAddress: z.string().trim().min(3).max(250),
-  preferredDate: z
-    .string()
-    .trim()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Preferred date must be YYYY-MM-DD"),
-  preferredTime: z.string().trim().min(1).max(60),
-  specialRequest: z.string().trim().max(500).optional(),
-  totalPrice: z.coerce.number().min(0).optional(),
-  cleanerPrice: z.coerce.number().min(0).optional(),
-  squareFoot: z.coerce.number().positive().optional(),
-  cleaningFrequency: cleaningFrequencyOptions.optional(),
-  cleaningServices: z.array(cleaningServiceOptions).optional(),
-  generalContractorName: z.string().trim().min(1).max(150).optional(),
-  generalContractorPhone: z.string().trim().min(6).max(30).optional(),
-  assignedCleanerIds: z.array(z.string().trim().min(1)).optional(),
-});
+const baseServiceRequestSchema = z
+  .object({
+    companyName: z.string().trim().min(1).max(150),
+    businessAddress: z.string().trim().min(3).max(250),
+    preferredDate: z
+      .string()
+      .trim()
+      .regex(DATE_PATTERN, "Preferred date must be YYYY-MM-DD")
+      .optional(),
+    preferredTime: z.string().trim().min(1).max(60).optional(),
+    cleaningSchedule: cleaningScheduleSchema.optional(),
+    specialRequest: z.string().trim().max(500).optional(),
+    totalPrice: z.coerce.number().min(0).optional(),
+    cleanerPrice: z.coerce.number().min(0).optional(),
+    squareFoot: z.coerce.number().positive().optional(),
+    cleaningFrequency: cleaningFrequencyOptions.optional(),
+    cleaningServices: z.array(cleaningServiceOptions).optional(),
+    generalContractorName: z.string().trim().min(1).max(150).optional(),
+    generalContractorPhone: z.string().trim().min(6).max(30).optional(),
+    assignedCleanerIds: z.array(z.string().trim().min(1)).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const hasLegacyDate = Boolean(data.preferredDate?.trim());
+    const hasLegacyTime = Boolean(data.preferredTime?.trim());
+
+    if (!data.cleaningSchedule && (!hasLegacyDate || !hasLegacyTime)) {
+      if (!hasLegacyDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["preferredDate"],
+          message: "Preferred date is required when cleaningSchedule is not provided",
+        });
+      }
+      if (!hasLegacyTime) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["preferredTime"],
+          message: "Preferred time is required when cleaningSchedule is not provided",
+        });
+      }
+    }
+
+    if (data.cleaningSchedule && data.cleaningFrequency) {
+      const frequencyFromSchedule =
+        data.cleaningSchedule.frequency === "one_time"
+          ? "one-time"
+          : data.cleaningSchedule.frequency;
+      if (frequencyFromSchedule !== data.cleaningFrequency) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cleaningFrequency"],
+          message: "cleaningFrequency must match cleaningSchedule.frequency",
+        });
+      }
+    }
+  });
 
 export const createAdminServiceRequestSchema = z.object({
   body: baseServiceRequestSchema.extend({
@@ -59,6 +222,7 @@ export const createAdminServiceRequestSchema = z.object({
     specialRequest: z.string().trim().min(1).max(500).optional(),
   }),
 });
+
 export const createQuoteGuestSchema = z.object({
   body: baseQuoteSchema.extend({
     firstName: z.string().min(1).max(100),
@@ -146,7 +310,7 @@ export const assignQuoteCleanerSchema = z.object({
     })
     .refine(
       (data) => Boolean(data.cleanerId || (data.cleanerIds && data.cleanerIds.length)),
-      { message: "cleanerId or cleanerIds is required" }
+      { message: "cleanerId or cleanerIds is required" },
     )
     .refine(
       (data) =>
@@ -156,7 +320,7 @@ export const assignQuoteCleanerSchema = z.object({
       {
         message: "cleanerSharePercentage is required when assigning multiple cleaners",
         path: ["cleanerSharePercentage"],
-      }
+      },
     ),
   params: z.object({
     quoteId: z.string().min(1),
@@ -175,7 +339,7 @@ export const confirmQuotePaymentSchema = z.object({
       {
         message: "paymentIntentId or checkoutSessionId is required",
         path: ["paymentIntentId"],
-      }
+      },
     ),
 });
 
@@ -196,6 +360,6 @@ export const quotePaymentStatusSchema = z.object({
       {
         message: "paymentIntentId or checkoutSessionId is required",
         path: ["paymentIntentId"],
-      }
+      },
     ),
 });

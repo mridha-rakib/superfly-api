@@ -7,6 +7,14 @@ import type { QuoteCleanerReminderType } from "./quote-cleaner-reminder.interfac
 import { QuoteCleanerReminderRepository } from "./quote-cleaner-reminder.repository";
 import { QuoteRepository } from "./quote.repository";
 import { UserService } from "../user/user.service";
+import type {
+  QuoteCleaningSchedule,
+  QuoteCleaningScheduleMonthlySpecificDates,
+  QuoteCleaningScheduleMonthlyWeekdayPattern,
+  QuoteCleaningScheduleWeekly,
+  QuoteScheduleMonthWeek,
+  QuoteScheduleWeekday,
+} from "./quote-schedule.type";
 
 type ReminderFrequency = "one-time" | "daily" | "weekly" | "monthly";
 
@@ -14,6 +22,16 @@ type CleanerContact = {
   id: string;
   fullName: string;
   email: string;
+};
+
+const SCHEDULE_WEEKDAY_TO_INDEX: Record<QuoteScheduleWeekday, number> = {
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+  sunday: 0,
 };
 
 export type QuoteCleanerReminderRunResult = {
@@ -85,22 +103,17 @@ export class QuoteCleanerReminderService {
     };
 
     for (const quote of quotes) {
-      const baseOccurrence = this.parseServiceDateTime(
-        quote.serviceDate,
-        quote.preferredTime,
-      );
-      if (!baseOccurrence) {
-        result.skippedInvalidSchedule += 1;
-        continue;
-      }
-
-      const frequency = this.normalizeFrequency(quote.cleaningFrequency);
-      const occurrences = this.findOccurrencesInWindow(
-        baseOccurrence,
+      const frequency = this.resolveReminderFrequency(quote);
+      const occurrences = this.findOccurrencesForQuote(
+        quote,
         frequency,
         occurrenceWindowStart,
         occurrenceWindowEnd,
       );
+      if (!occurrences) {
+        result.skippedInvalidSchedule += 1;
+        continue;
+      }
 
       if (!occurrences.length) {
         continue;
@@ -209,32 +222,311 @@ export class QuoteCleanerReminderService {
     return Array.from(new Set(ids));
   }
 
-  private parseServiceDateTime(
-    serviceDate?: string,
-    preferredTime?: string,
-  ): Date | null {
-    if (!serviceDate) {
+  private resolveReminderFrequency(quote: IQuote): ReminderFrequency {
+    const scheduleFrequency = quote.cleaningSchedule?.frequency;
+    if (scheduleFrequency === "one_time") {
+      return "one-time";
+    }
+    if (scheduleFrequency === "weekly" || scheduleFrequency === "monthly") {
+      return scheduleFrequency;
+    }
+
+    return this.normalizeFrequency(quote.cleaningFrequency);
+  }
+
+  private findOccurrencesForQuote(
+    quote: IQuote,
+    frequency: ReminderFrequency,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Date[] | null {
+    if (windowEnd < windowStart) {
+      return [];
+    }
+
+    const schedule = quote.cleaningSchedule;
+    if (schedule) {
+      return this.findOccurrencesFromSchedule(quote, schedule, windowStart, windowEnd);
+    }
+
+    const baseOccurrence = this.parseServiceDateTime(
+      quote.serviceDate,
+      quote.preferredTime,
+    );
+    if (!baseOccurrence) {
       return null;
     }
 
-    const dateMatch = serviceDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!dateMatch) {
+    return this.findOccurrencesInWindow(
+      baseOccurrence,
+      frequency,
+      windowStart,
+      windowEnd,
+    );
+  }
+
+  private findOccurrencesFromSchedule(
+    quote: IQuote,
+    schedule: QuoteCleaningSchedule,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Date[] | null {
+    const startsOn = quote.serviceDate
+      ? this.parseDateOnly(quote.serviceDate)
+      : null;
+
+    if (schedule.frequency === "one_time") {
+      const oneTime = this.parseServiceDateTime(
+        schedule.schedule.date,
+        schedule.schedule.start_time,
+      );
+      if (!oneTime) {
+        return null;
+      }
+      return oneTime >= windowStart && oneTime <= windowEnd ? [oneTime] : [];
+    }
+
+    if (schedule.frequency === "weekly") {
+      return this.findWeeklyScheduleOccurrences(
+        schedule,
+        startsOn,
+        windowStart,
+        windowEnd,
+      );
+    }
+
+    if (schedule.pattern_type === "specific_dates") {
+      return this.findMonthlySpecificDateScheduleOccurrences(
+        schedule,
+        startsOn,
+        windowStart,
+        windowEnd,
+      );
+    }
+
+    return this.findMonthlyWeekdayPatternOccurrences(
+      schedule,
+      startsOn,
+      windowStart,
+      windowEnd,
+    );
+  }
+
+  private findWeeklyScheduleOccurrences(
+    schedule: QuoteCleaningScheduleWeekly,
+    startsOn: Date | null,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Date[] | null {
+    const time = this.parseTime(schedule.start_time);
+    if (!time) {
       return null;
     }
 
-    const normalizedTime = normalizeTimeTo24Hour(preferredTime || "");
-    const timeMatch = normalizedTime.match(/^(\d{2}):(\d{2})$/);
-    if (!timeMatch) {
+    const repeatUntil = schedule.repeat_until
+      ? this.parseDateOnly(schedule.repeat_until)
+      : null;
+    if (schedule.repeat_until && !repeatUntil) {
       return null;
     }
 
-    const year = Number(dateMatch[1]);
-    const month = Number(dateMatch[2]);
-    const day = Number(dateMatch[3]);
-    const hour = Number(timeMatch[1]);
-    const minute = Number(timeMatch[2]);
+    const repeatUntilEnd = repeatUntil
+      ? new Date(
+          repeatUntil.getFullYear(),
+          repeatUntil.getMonth(),
+          repeatUntil.getDate(),
+          23,
+          59,
+          59,
+          999,
+        )
+      : null;
 
-    const parsed = new Date(year, month - 1, day, hour, minute, 0, 0);
+    const daySet = new Set(
+      schedule.days.map((day) => day.toLowerCase() as QuoteScheduleWeekday),
+    );
+
+    const occurrences: Date[] = [];
+    const cursor = new Date(
+      windowStart.getFullYear(),
+      windowStart.getMonth(),
+      windowStart.getDate(),
+    );
+    const endDate = new Date(
+      windowEnd.getFullYear(),
+      windowEnd.getMonth(),
+      windowEnd.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+
+    while (cursor <= endDate) {
+      if (repeatUntilEnd && cursor > repeatUntilEnd) {
+        break;
+      }
+      if (startsOn && cursor < startsOn) {
+        cursor.setDate(cursor.getDate() + 1);
+        continue;
+      }
+
+      const weekday = this.weekdayFromDate(cursor);
+      if (daySet.has(weekday)) {
+        const occurrence = new Date(cursor);
+        occurrence.setHours(time.hours, time.minutes, 0, 0);
+        if (occurrence >= windowStart && occurrence <= windowEnd) {
+          occurrences.push(occurrence);
+        }
+      }
+
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return occurrences;
+  }
+
+  private findMonthlySpecificDateScheduleOccurrences(
+    schedule: QuoteCleaningScheduleMonthlySpecificDates,
+    startsOn: Date | null,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Date[] | null {
+    const time = this.parseTime(schedule.start_time);
+    if (!time) {
+      return null;
+    }
+
+    const dates = Array.from(new Set(schedule.dates)).sort((a, b) => a - b);
+    const occurrences: Date[] = [];
+
+    const monthCursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
+    const monthEnd = new Date(windowEnd.getFullYear(), windowEnd.getMonth(), 1);
+
+    while (monthCursor <= monthEnd) {
+      const year = monthCursor.getFullYear();
+      const month = monthCursor.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      for (const day of dates) {
+        if (day < 1 || day > daysInMonth) {
+          continue;
+        }
+
+        const candidateDay = new Date(year, month, day);
+        if (startsOn && candidateDay < startsOn) {
+          continue;
+        }
+
+        const occurrence = new Date(year, month, day, time.hours, time.minutes, 0, 0);
+        if (occurrence >= windowStart && occurrence <= windowEnd) {
+          occurrences.push(occurrence);
+        }
+      }
+
+      monthCursor.setMonth(monthCursor.getMonth() + 1, 1);
+    }
+
+    return occurrences;
+  }
+
+  private findMonthlyWeekdayPatternOccurrences(
+    schedule: QuoteCleaningScheduleMonthlyWeekdayPattern,
+    startsOn: Date | null,
+    windowStart: Date,
+    windowEnd: Date,
+  ): Date[] | null {
+    const time = this.parseTime(schedule.start_time);
+    if (!time) {
+      return null;
+    }
+
+    const occurrences: Date[] = [];
+    const monthCursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
+    const monthEnd = new Date(windowEnd.getFullYear(), windowEnd.getMonth(), 1);
+
+    while (monthCursor <= monthEnd) {
+      const year = monthCursor.getFullYear();
+      const month = monthCursor.getMonth();
+      const dayOfMonth = this.getWeekdayPatternDayOfMonth(
+        year,
+        month,
+        schedule.week,
+        schedule.day,
+      );
+
+      if (dayOfMonth) {
+        const candidateDay = new Date(year, month, dayOfMonth);
+        if (!startsOn || candidateDay >= startsOn) {
+          const occurrence = new Date(
+            year,
+            month,
+            dayOfMonth,
+            time.hours,
+            time.minutes,
+            0,
+            0,
+          );
+          if (occurrence >= windowStart && occurrence <= windowEnd) {
+            occurrences.push(occurrence);
+          }
+        }
+      }
+
+      monthCursor.setMonth(monthCursor.getMonth() + 1, 1);
+    }
+
+    return occurrences;
+  }
+
+  private getWeekdayPatternDayOfMonth(
+    year: number,
+    month: number,
+    week: QuoteScheduleMonthWeek,
+    day: QuoteScheduleWeekday,
+  ): number | null {
+    const targetWeekday = SCHEDULE_WEEKDAY_TO_INDEX[day];
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    if (week === "last") {
+      const lastWeekday = new Date(year, month, daysInMonth).getDay();
+      const delta = (lastWeekday - targetWeekday + 7) % 7;
+      return daysInMonth - delta;
+    }
+
+    const firstWeekday = new Date(year, month, 1).getDay();
+    const offsetFromFirst = (targetWeekday - firstWeekday + 7) % 7;
+    const weekOffset =
+      week === "first"
+        ? 0
+        : week === "second"
+          ? 1
+          : week === "third"
+            ? 2
+            : 3;
+    const dayOfMonth = 1 + offsetFromFirst + weekOffset * 7;
+
+    if (dayOfMonth > daysInMonth) {
+      return null;
+    }
+
+    return dayOfMonth;
+  }
+
+  private parseDateOnly(value?: string): Date | null {
+    if (!value) {
+      return null;
+    }
+
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(year, month - 1, day);
     if (
       Number.isNaN(parsed.getTime()) ||
       parsed.getFullYear() !== year ||
@@ -247,8 +539,42 @@ export class QuoteCleanerReminderService {
     return parsed;
   }
 
+  private parseTime(value?: string): { hours: number; minutes: number } | null {
+    const normalized = normalizeTimeTo24Hour(value || "");
+    const match = normalized.match(/^(\d{2}):(\d{2})$/);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      hours: Number(match[1]),
+      minutes: Number(match[2]),
+    };
+  }
+
+  private parseServiceDateTime(
+    serviceDate?: string,
+    preferredTime?: string,
+  ): Date | null {
+    const parsedDate = this.parseDateOnly(serviceDate);
+    const parsedTime = this.parseTime(preferredTime);
+    if (!parsedDate || !parsedTime) {
+      return null;
+    }
+
+    return new Date(
+      parsedDate.getFullYear(),
+      parsedDate.getMonth(),
+      parsedDate.getDate(),
+      parsedTime.hours,
+      parsedTime.minutes,
+      0,
+      0,
+    );
+  }
+
   private normalizeFrequency(value?: string): ReminderFrequency {
-    const normalized = (value || "").trim().toLowerCase();
+    const normalized = (value || "").trim().toLowerCase().replace(/[_\s]+/g, "-");
     if (
       normalized === "daily" ||
       normalized === "weekly" ||
@@ -362,6 +688,25 @@ export class QuoteCleanerReminderService {
     }
 
     return occurrences;
+  }
+
+  private weekdayFromDate(value: Date): QuoteScheduleWeekday {
+    switch (value.getDay()) {
+      case 1:
+        return "monday";
+      case 2:
+        return "tuesday";
+      case 3:
+        return "wednesday";
+      case 4:
+        return "thursday";
+      case 5:
+        return "friday";
+      case 6:
+        return "saturday";
+      default:
+        return "sunday";
+    }
   }
 
   private addDays(value: Date, days: number): Date {

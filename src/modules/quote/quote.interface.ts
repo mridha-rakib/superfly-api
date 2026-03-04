@@ -1,4 +1,5 @@
 import type { Document, Types } from "mongoose";
+import type { QuoteCleaningSchedule } from "./quote-schedule.type";
 
 export type QuoteServiceType =
   | "residential"
@@ -47,6 +48,7 @@ export interface IQuote extends Document {
   notes?: string;
   squareFoot?: number;
   cleaningFrequency?: string;
+  cleaningSchedule?: QuoteCleaningSchedule;
   cleaningServices?: string[];
   generalContractorName?: string;
   generalContractorPhone?: string;

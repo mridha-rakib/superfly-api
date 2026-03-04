@@ -5,6 +5,7 @@ import type {
   QuoteStatus,
 } from "./quote.interface";
 import type { CleaningReportStatus } from "@/modules/cleaning-report/cleaning-report.interface";
+import type { QuoteCleaningSchedule } from "./quote-schedule.type";
 
 export type QuoteServiceSelection = Record<string, number | undefined>;
 export type QuotePaymentStatus = "pending" | "paid" | "failed";
@@ -36,13 +37,14 @@ export type QuoteRequestPayload = {
   email?: string;
   phoneNumber?: string;
   businessAddress: string;
-  preferredDate: string;
-  preferredTime: string;
+  preferredDate?: string;
+  preferredTime?: string;
   specialRequest?: string;
   totalPrice?: number;
   cleanerPrice?: number;
   squareFoot?: number;
   cleaningFrequency?: string;
+  cleaningSchedule?: QuoteCleaningSchedule;
   cleaningServices?: string[];
   generalContractorName?: string;
   generalContractorPhone?: string;
@@ -104,6 +106,7 @@ export type QuoteResponse = {
   cleanerEarningAmount?: number;
   squareFoot?: number;
   cleaningFrequency?: string;
+  cleaningSchedule?: QuoteCleaningSchedule;
   cleaningServices?: string[];
   generalContractorName?: string;
   generalContractorPhone?: string;

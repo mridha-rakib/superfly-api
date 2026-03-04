@@ -80,6 +80,9 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     type: String,
     trim: true,
   },
+  cleaningSchedule: {
+    type: Schema.Types.Mixed,
+  },
   cleaningServices: [
     {
       type: String,

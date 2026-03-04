@@ -109,7 +109,7 @@ export class QuoteRepository extends BaseRepository<IQuote> {
         ],
       })
       .select(
-        "_id serviceType companyName businessAddress serviceDate preferredTime cleaningFrequency assignedCleanerId assignedCleanerIds",
+        "_id serviceType companyName businessAddress serviceDate preferredTime cleaningFrequency cleaningSchedule assignedCleanerId assignedCleanerIds",
       )
       .exec();
   }
