@@ -214,7 +214,7 @@ const baseServiceRequestSchema = z
   });
 
 export const createAdminServiceRequestSchema = z.object({
-  body: baseServiceRequestSchema.extend({
+  body: baseServiceRequestSchema.safeExtend({
     serviceType: z.enum(["commercial", "post_construction"]),
     name: z.string().trim().min(1).max(200).optional(),
     email: z.string().email("Invalid email format").optional(),
@@ -252,7 +252,7 @@ const commercialRequirements = {
 };
 
 export const createServiceRequestGuestSchema = z.object({
-  body: baseServiceRequestSchema.extend({
+  body: baseServiceRequestSchema.safeExtend({
     name: z.string().trim().min(1).max(200),
     email: z.string().email("Invalid email format"),
     phoneNumber: z.string().trim().min(6).max(20),
@@ -260,7 +260,7 @@ export const createServiceRequestGuestSchema = z.object({
 });
 
 export const createServiceRequestAuthSchema = z.object({
-  body: baseServiceRequestSchema.extend({
+  body: baseServiceRequestSchema.safeExtend({
     name: z.string().trim().min(1).max(200).optional(),
     email: z.string().email("Invalid email format").optional(),
     phoneNumber: z.string().trim().min(6).max(20).optional(),
@@ -268,15 +268,15 @@ export const createServiceRequestAuthSchema = z.object({
 });
 
 export const createCommercialServiceRequestGuestSchema = z.object({
-  body: createServiceRequestGuestSchema.shape.body.extend(commercialRequirements),
+  body: createServiceRequestGuestSchema.shape.body.safeExtend(commercialRequirements),
 });
 
 export const createCommercialServiceRequestAuthSchema = z.object({
-  body: createServiceRequestAuthSchema.shape.body.extend(commercialRequirements),
+  body: createServiceRequestAuthSchema.shape.body.safeExtend(commercialRequirements),
 });
 
 export const createServiceRequestAdminSchema = z.object({
-  body: baseServiceRequestSchema.extend({
+  body: baseServiceRequestSchema.safeExtend({
     serviceType: z.enum([
       QUOTE.SERVICE_TYPES.COMMERCIAL,
       QUOTE.SERVICE_TYPES.POST_CONSTRUCTION,
