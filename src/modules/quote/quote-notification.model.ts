@@ -14,6 +14,23 @@ const quoteNotificationSchema = BaseSchemaUtil.createSchema<IQuoteNotification>(
     required: true,
     default: "quote_submitted",
   },
+  eventKey: {
+    type: String,
+    required: true,
+    default: "default",
+    trim: true,
+    index: true,
+  },
+  title: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  message: {
+    type: String,
+    required: true,
+    trim: true,
+  },
   serviceType: {
     type: String,
     required: true,
@@ -58,9 +75,20 @@ const quoteNotificationSchema = BaseSchemaUtil.createSchema<IQuoteNotification>(
     type: String,
     trim: true,
   },
+  isRead: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  readAt: {
+    type: Date,
+  },
 });
 
-quoteNotificationSchema.index({ quoteId: 1, event: 1 }, { unique: true });
+quoteNotificationSchema.index(
+  { quoteId: 1, event: 1, eventKey: 1 },
+  { unique: true },
+);
 
 export const QuoteNotification = model<IQuoteNotification>(
   "QuoteNotification",

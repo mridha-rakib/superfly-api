@@ -1,11 +1,17 @@
 import type { Document, Types } from "mongoose";
 import type { QuoteServiceType } from "./quote.interface";
 
-export type QuoteNotificationEvent = "quote_submitted";
+export type QuoteNotificationEvent =
+  | "quote_submitted"
+  | "report_submitted"
+  | "booking_completed";
 
 export type QuoteNotificationCreatePayload = {
   quoteId: Types.ObjectId | string;
   event: QuoteNotificationEvent;
+  eventKey?: string;
+  title: string;
+  message: string;
   serviceType: QuoteServiceType;
   clientName: string;
   companyName?: string;
@@ -22,6 +28,9 @@ export interface IQuoteNotification extends Document {
   _id: Types.ObjectId;
   quoteId: Types.ObjectId | string;
   event: QuoteNotificationEvent;
+  eventKey: string;
+  title: string;
+  message: string;
   serviceType: QuoteServiceType;
   clientName: string;
   companyName?: string;
@@ -32,6 +41,8 @@ export interface IQuoteNotification extends Document {
   preferredTime?: string;
   requestedServices: string[];
   notes?: string;
+  isRead: boolean;
+  readAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

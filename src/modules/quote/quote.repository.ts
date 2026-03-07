@@ -9,6 +9,72 @@ export class QuoteRepository extends BaseRepository<IQuote> {
     super(Quote);
   }
 
+  async findCleanerDateConflicts(
+    cleanerIds: string[],
+    serviceDate: string,
+    excludeQuoteId?: string,
+  ): Promise<IQuote[]> {
+    const objectIds = Array.from(
+      new Set(
+        (Array.isArray(cleanerIds) ? cleanerIds : [])
+          .map((id) => id?.toString().trim())
+          .filter((id): id is string => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      ),
+    );
+
+    if (!objectIds.length || !serviceDate?.trim()) {
+      return [];
+    }
+
+    const query: Record<string, any> = {
+      isDeleted: { $ne: true },
+      serviceDate: serviceDate.trim(),
+      $or: [
+        { assignedCleanerId: { $in: objectIds } },
+        { assignedCleanerIds: { $in: objectIds } },
+      ],
+    };
+
+    if (excludeQuoteId && Types.ObjectId.isValid(excludeQuoteId)) {
+      query._id = { $ne: new Types.ObjectId(excludeQuoteId) };
+    }
+
+    return this.model.find(query).exec();
+  }
+
+  async softDeleteManyByIds(quoteIds: string[]): Promise<number> {
+    const objectIds = Array.from(
+      new Set(
+        (Array.isArray(quoteIds) ? quoteIds : [])
+          .map((id) => id?.toString().trim())
+          .filter((id): id is string => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id)),
+      ),
+    );
+
+    if (!objectIds.length) {
+      return 0;
+    }
+
+    const result = await this.model
+      .updateMany(
+        {
+          _id: { $in: objectIds },
+          isDeleted: { $ne: true },
+        },
+        {
+          $set: {
+            isDeleted: true,
+            deletedAt: new Date(),
+          },
+        },
+      )
+      .exec();
+
+    return result.modifiedCount || 0;
+  }
+
   async sumCleanerEarnings(
     cleanerId: string
   ): Promise<{

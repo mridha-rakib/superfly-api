@@ -47,6 +47,27 @@ export type AdminQuoteCreatedEvent = {
   createdAt: string;
 };
 
+export type AdminReportSubmittedEvent = {
+  quoteId: string;
+  reportId: string;
+  serviceType: string;
+  clientName: string;
+  serviceDate?: string;
+  preferredTime?: string;
+  submittedBy?: string;
+  submittedAt: string;
+};
+
+export type AdminBookingCompletedEvent = {
+  quoteId: string;
+  serviceType: string;
+  clientName: string;
+  serviceDate?: string;
+  preferredTime?: string;
+  status?: string;
+  completedAt: string;
+};
+
 export type QuoteStatusNotificationEvent = {
   userId: string;
   recipientType: "cleaner" | "client";
@@ -183,10 +204,52 @@ class RealtimeService {
       createdAt: event.createdAt,
     };
 
-    this.io.to(this.roleRoom("admin")).emit("admin:quote-created", payload);
-    this.io
-      .to(this.roleRoom("super_admin"))
-      .emit("admin:quote-created", payload);
+    this.emitToAdminRoles("admin:quote-created", payload);
+  }
+
+  emitAdminReportSubmitted(event: AdminReportSubmittedEvent): void {
+    if (!this.io) {
+      logger.warn(
+        { quoteId: event.quoteId, reportId: event.reportId },
+        "WebSocket server not initialized; skipping admin report-submitted emit"
+      );
+      return;
+    }
+
+    const payload = {
+      quoteId: event.quoteId,
+      reportId: event.reportId,
+      serviceType: event.serviceType,
+      clientName: event.clientName,
+      serviceDate: event.serviceDate,
+      preferredTime: event.preferredTime,
+      submittedBy: event.submittedBy,
+      submittedAt: event.submittedAt,
+    };
+
+    this.emitToAdminRoles("admin:report-submitted", payload);
+  }
+
+  emitAdminBookingCompleted(event: AdminBookingCompletedEvent): void {
+    if (!this.io) {
+      logger.warn(
+        { quoteId: event.quoteId },
+        "WebSocket server not initialized; skipping admin booking-completed emit"
+      );
+      return;
+    }
+
+    const payload = {
+      quoteId: event.quoteId,
+      serviceType: event.serviceType,
+      clientName: event.clientName,
+      serviceDate: event.serviceDate,
+      preferredTime: event.preferredTime,
+      status: event.status,
+      completedAt: event.completedAt,
+    };
+
+    this.emitToAdminRoles("admin:booking-completed", payload);
   }
 
   emitQuoteStatusNotification(event: QuoteStatusNotificationEvent): void {
@@ -217,6 +280,11 @@ class RealtimeService {
 
   private roleRoom(role: string): string {
     return `role:${role}`;
+  }
+
+  private emitToAdminRoles(eventName: string, payload: Record<string, unknown>): void {
+    this.io?.to(this.roleRoom("admin")).emit(eventName, payload);
+    this.io?.to(this.roleRoom("super_admin")).emit(eventName, payload);
   }
 
   private extractToken(socket: AuthenticatedSocket): string | undefined {

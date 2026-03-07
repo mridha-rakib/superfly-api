@@ -50,6 +50,27 @@ router.get(
   quoteController.listAdminQuotes,
 );
 
+router.get(
+  "/admin/notifications",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.listAdminNotifications,
+);
+
+router.patch(
+  "/admin/notifications/:notificationId/read",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.markAdminNotificationAsRead,
+);
+
+router.patch(
+  "/admin/notifications/read-all",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.markAllAdminNotificationsAsRead,
+);
+
 router.patch(
   "/:quoteId/status",
   authMiddleware.verifyToken,
@@ -62,6 +83,13 @@ router.patch(
   authMiddleware.verifyToken,
   authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
   quoteController.assignCleaner,
+);
+
+router.delete(
+  "/bulk",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  quoteController.bulkDeleteQuotes,
 );
 
 router.delete(

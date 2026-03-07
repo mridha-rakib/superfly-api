@@ -6,6 +6,7 @@ import type {
 } from "./quote.interface";
 import type { CleaningReportStatus } from "@/modules/cleaning-report/cleaning-report.interface";
 import type { QuoteCleaningSchedule } from "./quote-schedule.type";
+import type { QuoteNotificationEvent } from "./quote-notification.interface";
 
 export type QuoteServiceSelection = Record<string, number | undefined>;
 export type QuotePaymentStatus = "pending" | "paid" | "failed";
@@ -147,4 +148,36 @@ export type QuoteCleaningReportSummary = {
   afterPhotos: string[];
   status: CleaningReportStatus;
   createdAt: Date;
+};
+
+export type AdminQuoteNotificationResponse = {
+  _id: string;
+  quoteId: string;
+  event: QuoteNotificationEvent;
+  eventKey: string;
+  title: string;
+  message: string;
+  serviceType: QuoteServiceType;
+  clientName: string;
+  companyName?: string;
+  email: string;
+  phoneNumber: string;
+  businessAddress?: string;
+  serviceDate: string;
+  preferredTime?: string;
+  requestedServices: string[];
+  notes?: string;
+  isRead: boolean;
+  readAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type AdminQuoteNotificationListResponse = {
+  items: AdminQuoteNotificationResponse[];
+  totalItems: number;
+  unreadCount: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 };

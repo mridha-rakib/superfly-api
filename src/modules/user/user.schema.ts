@@ -26,6 +26,12 @@ export const cleanerIdSchema = z.object({
   }),
 });
 
+export const clientIdSchema = z.object({
+  params: z.object({
+    clientId: z.string().trim().min(1),
+  }),
+});
+
 export const updateCleanerSchema = z.object({
   params: z.object({
     cleanerId: z.string().trim().min(1),

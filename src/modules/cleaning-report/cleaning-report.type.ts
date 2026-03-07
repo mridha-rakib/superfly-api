@@ -4,6 +4,7 @@ import type { CleaningReportStatus } from "./cleaning-report.interface";
 export type CleaningReportCreatePayload = {
   beforePhotos?: string[];
   afterPhotos?: string[];
+  occurrenceDate?: string;
   arrivalTime: string;
   startTime: string;
   endTime: string;
@@ -14,6 +15,7 @@ export type CleaningReportResponse = {
   _id: string;
   quoteId: string;
   cleanerId: string;
+  occurrenceDate: string;
   beforePhotos: string[];
   afterPhotos: string[];
   arrivalTime: Date;

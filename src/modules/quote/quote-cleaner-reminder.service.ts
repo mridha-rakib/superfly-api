@@ -35,6 +35,21 @@ const SCHEDULE_WEEKDAY_TO_INDEX: Record<QuoteScheduleWeekday, number> = {
   sunday: 0,
 };
 
+const MONTH_DAY_LIMITS: Record<number, number> = {
+  1: 31,
+  2: 28,
+  3: 31,
+  4: 30,
+  5: 31,
+  6: 30,
+  7: 31,
+  8: 31,
+  9: 30,
+  10: 31,
+  11: 30,
+  12: 31,
+};
+
 export type QuoteCleanerReminderRunResult = {
   scannedQuotes: number;
   matchedOccurrences: number;
@@ -398,8 +413,7 @@ export class QuoteCleanerReminderService {
       return null;
     }
 
-    const dates = Array.from(new Set(schedule.dates)).sort((a, b) => a - b);
-    const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
+    const monthDatesMap = this.resolveMonthlyDatesMap(schedule);
     const occurrences: Date[] = [];
 
     const monthCursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
@@ -409,7 +423,8 @@ export class QuoteCleanerReminderService {
       const year = monthCursor.getFullYear();
       const month = monthCursor.getMonth();
       const monthValue = month + 1;
-      if (!monthSet.has(monthValue)) {
+      const dates = monthDatesMap.get(monthValue) || [];
+      if (!dates.length) {
         monthCursor.setMonth(monthCursor.getMonth() + 1, 1);
         continue;
       }
@@ -754,6 +769,23 @@ export class QuoteCleanerReminderService {
     );
   }
 
+  private maxDayForMonth(month: number): number {
+    return MONTH_DAY_LIMITS[month] || 31;
+  }
+
+  private normalizeDatesForMonth(dates: number[] | undefined, month: number): number[] {
+    const maxDay = this.maxDayForMonth(month);
+    return Array.from(
+      new Set(
+        (Array.isArray(dates) ? dates : [])
+          .map((value) => Number(value))
+          .filter(
+            (value) => Number.isInteger(value) && value >= 1 && value <= maxDay,
+          ),
+      ),
+    ).sort((a, b) => a - b);
+  }
+
   private normalizeScheduleMonths(months?: number[]): number[] {
     const normalized = Array.from(
       new Set(
@@ -764,6 +796,43 @@ export class QuoteCleanerReminderService {
     ).sort((a, b) => a - b);
 
     return normalized.length ? normalized : [...QUOTE_SCHEDULE_MONTHS];
+  }
+
+  private resolveMonthlyDatesMap(
+    schedule: QuoteCleaningScheduleMonthlySpecificDates,
+  ): Map<number, number[]> {
+    const months = this.normalizeScheduleMonths(schedule.months);
+    const result = new Map<number, number[]>();
+
+    if (Array.isArray(schedule.month_dates) && schedule.month_dates.length > 0) {
+      for (const entry of schedule.month_dates) {
+        const month = Number(entry.month);
+        if (!months.includes(month)) {
+          continue;
+        }
+        const dates = this.normalizeDatesForMonth(entry.dates, month);
+        if (dates.length) {
+          result.set(month, dates);
+        }
+      }
+    } else {
+      const fallbackDates = Array.from(
+        new Set(
+          (Array.isArray(schedule.dates) ? schedule.dates : [])
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 1 && value <= 31),
+        ),
+      ).sort((a, b) => a - b);
+
+      for (const month of months) {
+        const dates = this.normalizeDatesForMonth(fallbackDates, month);
+        if (dates.length) {
+          result.set(month, dates);
+        }
+      }
+    }
+
+    return result;
   }
 
   private serviceTypeLabel(serviceType: string): string {

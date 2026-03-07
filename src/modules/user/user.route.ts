@@ -64,4 +64,11 @@ router.delete(
   userController.deleteCleaner,
 );
 
+router.delete(
+  "/clients/:clientId",
+  authMiddleware.verifyToken,
+  authMiddleware.authorize(ROLES.ADMIN, ROLES.SUPER_ADMIN),
+  userController.deleteClient,
+);
+
 export default router;

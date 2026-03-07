@@ -4,6 +4,7 @@ export const createCleaningReportSchema = z.object({
   body: z.object({
     beforePhotos: z.array(z.string().min(1)).min(1).optional(),
     afterPhotos: z.array(z.string().min(1)).min(1).optional(),
+    occurrenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     arrivalTime: z.string().datetime(),
     startTime: z.string().datetime(),
     endTime: z.string().datetime(),

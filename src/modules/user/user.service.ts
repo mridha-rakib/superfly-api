@@ -9,6 +9,7 @@ import {
   ROLES,
 } from "@/constants/app.constants";
 import { logger } from "@/middlewares/pino-logger";
+import { Quote } from "@/modules/quote/quote.model";
 import { EmailService } from "@/services/email.service";
 import { s3Service, type StorageUploadInput } from "@/services/s3.service";
 import {
@@ -312,6 +313,39 @@ export class UserService {
     }
 
     await this.userRepository.softDelete(cleanerId);
+  }
+
+  async deleteClient(clientId: string): Promise<{ deletedQuotes: number }> {
+    const client = await this.userRepository.findOne({
+      _id: clientId,
+      role: ROLES.CLIENT,
+      isDeleted: false,
+    });
+
+    if (!client) {
+      throw new NotFoundException("Client not found");
+    }
+
+    const deletedAt = new Date();
+    const quoteCleanup = await Quote.updateMany(
+      {
+        userId: client._id,
+        isDeleted: { $ne: true },
+      },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt,
+        },
+      }
+    ).exec();
+
+    await this.userRepository.softDelete(clientId);
+    await this.userRepository.deleteAllRefreshTokens(clientId);
+
+    return {
+      deletedQuotes: quoteCleanup.modifiedCount || 0,
+    };
   }
 
   async getUserByEmail(email: string): Promise<IUser | null> {

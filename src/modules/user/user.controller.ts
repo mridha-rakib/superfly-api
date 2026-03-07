@@ -11,6 +11,7 @@ import { zParse } from "@/utils/validators.utils";
 import type { Request, Response } from "express";
 import type { StorageUploadInput } from "@/services/s3.service";
 import {
+  clientIdSchema,
   cleanerIdSchema,
   createCleanerSchema,
   listCleanersSchema,
@@ -116,5 +117,11 @@ export class UserController {
     const validated = await zParse(cleanerIdSchema, req);
     await this.userService.deleteCleaner(validated.params.cleanerId);
     ApiResponse.success(res, { message: "Cleaner deleted successfully" });
+  });
+
+  deleteClient = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(clientIdSchema, req);
+    const result = await this.userService.deleteClient(validated.params.clientId);
+    ApiResponse.success(res, result, "Client deleted successfully");
   });
 }

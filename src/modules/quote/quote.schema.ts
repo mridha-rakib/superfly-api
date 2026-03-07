@@ -55,9 +55,10 @@ const MONTH_DAY_LIMITS: Record<number, number> = {
   11: 30,
   12: 31,
 };
+const maxDayForMonth = (month: number) => MONTH_DAY_LIMITS[month] || 31;
 const maxDayForMonths = (months?: number[]) => {
   const source = months?.length ? months : [...QUOTE_SCHEDULE_MONTHS];
-  const values = source.map((month) => MONTH_DAY_LIMITS[month] || 31);
+  const values = source.map((month) => maxDayForMonth(month));
   return values.length ? Math.max(...values) : 31;
 };
 
@@ -69,6 +70,22 @@ const time24HourSchema = z
   .string()
   .trim()
   .regex(TIME_24H_PATTERN, "Time must be HH:mm");
+
+const booleanQueryParam = z.preprocess((value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+  return undefined;
+}, z.boolean().optional());
 
 const toMinutes = (value: string): number => {
   const [hours, minutes] = value.split(":").map(Number);
@@ -122,16 +139,12 @@ const weeklyCleaningScheduleSchema = z
     }
   });
 
-const monthlySpecificDatesCleaningScheduleSchema = z
+const monthlyMonthDatesSchema = z
   .object({
-    frequency: z.literal("monthly"),
-    pattern_type: z.literal("specific_dates"),
-    months: scheduleMonthsSchema,
+    month: scheduleMonthOptions,
     dates: z
       .array(z.coerce.number().int().min(1).max(31))
       .min(1, "Select at least one date"),
-    start_time: time24HourSchema,
-    end_time: time24HourSchema,
   })
   .superRefine((data, ctx) => {
     if (new Set(data.dates).size !== data.dates.length) {
@@ -141,6 +154,42 @@ const monthlySpecificDatesCleaningScheduleSchema = z
         message: "Dates must be unique",
       });
     }
+    const maxDay = maxDayForMonth(data.month);
+    if (data.dates.some((value) => value > maxDay)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dates"],
+        message: "Selected date(s) are not valid for this month",
+      });
+    }
+  });
+
+const monthlySpecificDatesCleaningScheduleSchema = z
+  .object({
+    frequency: z.literal("monthly"),
+    pattern_type: z.literal("specific_dates"),
+    months: scheduleMonthsSchema,
+    dates: z
+      .array(z.coerce.number().int().min(1).max(31))
+      .min(1, "Select at least one date")
+      .optional(),
+    month_dates: z.array(monthlyMonthDatesSchema).optional(),
+    start_time: time24HourSchema,
+    end_time: time24HourSchema,
+  })
+  .superRefine((data, ctx) => {
+    const monthDates = Array.isArray(data.month_dates) ? data.month_dates : [];
+    const hasMonthDates = monthDates.length > 0;
+    const hasLegacyDates = Array.isArray(data.dates) && data.dates.length > 0;
+
+    if (!hasMonthDates && !hasLegacyDates) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["month_dates"],
+        message: "Select at least one monthly date",
+      });
+    }
+
     if (data.months && new Set(data.months).size !== data.months.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -148,13 +197,44 @@ const monthlySpecificDatesCleaningScheduleSchema = z
         message: "Months must be unique",
       });
     }
-    const maxDay = maxDayForMonths(data.months);
-    if (data.dates.some((value) => value > maxDay)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["dates"],
-        message: "Selected date(s) are not valid for the selected month(s)",
-      });
+
+    if (hasMonthDates) {
+      const monthValues = monthDates.map((entry) => entry.month);
+      if (new Set(monthValues).size !== monthValues.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["month_dates"],
+          message: "Month entries must be unique",
+        });
+      }
+
+      const selectedMonths = data.months?.length ? data.months : monthValues;
+      const missingMonths = selectedMonths.filter(
+        (month) => !monthValues.includes(month)
+      );
+      if (missingMonths.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["month_dates"],
+          message: "Each selected month must include at least one date",
+        });
+      }
+    } else if (hasLegacyDates && data.dates) {
+      if (new Set(data.dates).size !== data.dates.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dates"],
+          message: "Dates must be unique",
+        });
+      }
+      const maxDay = maxDayForMonths(data.months);
+      if (data.dates.some((value) => value > maxDay)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dates"],
+          message: "Selected date(s) are not valid for the selected month(s)",
+        });
+      }
     }
 
     if (toMinutes(data.end_time) <= toMinutes(data.start_time)) {
@@ -400,6 +480,26 @@ export const confirmQuotePaymentSchema = z.object({
 export const quoteDetailSchema = z.object({
   params: z.object({
     quoteId: z.string().min(1),
+  }),
+});
+
+export const adminQuoteNotificationListSchema = z.object({
+  query: z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    onlyUnread: booleanQueryParam,
+  }),
+});
+
+export const adminQuoteNotificationDetailSchema = z.object({
+  params: z.object({
+    notificationId: z.string().trim().min(1),
+  }),
+});
+
+export const bulkDeleteQuotesSchema = z.object({
+  body: z.object({
+    quoteIds: z.array(z.string().trim().min(1)).min(1),
   }),
 });
 

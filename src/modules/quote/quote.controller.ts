@@ -8,6 +8,7 @@ import type { Request, Response } from "express";
 import { Types } from "mongoose";
 import {
   assignQuoteCleanerSchema,
+  bulkDeleteQuotesSchema,
   confirmQuotePaymentSchema,
   createQuoteAuthSchema,
   createQuoteGuestSchema,
@@ -16,6 +17,8 @@ import {
   createServiceRequestAuthSchema,
   createServiceRequestGuestSchema,
   createServiceRequestAdminSchema,
+  adminQuoteNotificationListSchema,
+  adminQuoteNotificationDetailSchema,
   quoteDetailSchema,
   quotePaymentStatusSchema,
   updateQuoteStatusSchema,
@@ -351,4 +354,55 @@ export class QuoteController {
     await this.quoteService.deleteQuote(validated.params.quoteId);
     ApiResponse.success(res, { message: "Quote deleted successfully" });
   });
+
+  bulkDeleteQuotes = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(bulkDeleteQuotesSchema, req);
+    const result = await this.quoteService.deleteQuotesBulk(
+      validated.body.quoteIds,
+    );
+    ApiResponse.success(
+      res,
+      result,
+      `${result.deletedCount} booking(s) deleted successfully`,
+    );
+  });
+
+  listAdminNotifications = asyncHandler(async (req: Request, res: Response) => {
+    const validated = await zParse(adminQuoteNotificationListSchema, req);
+    const notifications = await this.quoteService.listAdminNotifications(
+      validated.query,
+    );
+
+    ApiResponse.success(
+      res,
+      notifications,
+      "Admin notifications fetched successfully",
+    );
+  });
+
+  markAdminNotificationAsRead = asyncHandler(
+    async (req: Request, res: Response) => {
+      const validated = await zParse(adminQuoteNotificationDetailSchema, req);
+      const notification = await this.quoteService.markAdminNotificationAsRead(
+        validated.params.notificationId,
+      );
+
+      ApiResponse.success(
+        res,
+        notification,
+        "Notification marked as read successfully",
+      );
+    },
+  );
+
+  markAllAdminNotificationsAsRead = asyncHandler(
+    async (_req: Request, res: Response) => {
+      const result = await this.quoteService.markAllAdminNotificationsAsRead();
+      ApiResponse.success(
+        res,
+        result,
+        "All notifications marked as read successfully",
+      );
+    },
+  );
 }

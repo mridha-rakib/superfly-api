@@ -15,6 +15,12 @@ const cleaningReportSchema = BaseSchemaUtil.createSchema<ICleaningReport>({
     required: true,
     index: true,
   },
+  occurrenceDate: {
+    type: String,
+    required: true,
+    trim: true,
+    index: true,
+  },
   beforePhotos: [
     {
       type: String,
@@ -51,7 +57,7 @@ const cleaningReportSchema = BaseSchemaUtil.createSchema<ICleaningReport>({
   },
 });
 
-cleaningReportSchema.index({ quoteId: 1 }, { unique: true });
+cleaningReportSchema.index({ quoteId: 1, occurrenceDate: 1 }, { unique: true });
 
 export const CleaningReport = model<ICleaningReport>(
   "CleaningReport",

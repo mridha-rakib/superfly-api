@@ -9,7 +9,14 @@ export class CleaningReportRepository extends BaseRepository<ICleaningReport> {
   }
 
   async findByQuoteId(quoteId: string): Promise<ICleaningReport | null> {
-    return this.model.findOne({ quoteId }).exec();
+    return this.model.findOne({ quoteId }).sort({ createdAt: -1 }).exec();
+  }
+
+  async findByQuoteAndOccurrence(
+    quoteId: string,
+    occurrenceDate: string
+  ): Promise<ICleaningReport | null> {
+    return this.model.findOne({ quoteId, occurrenceDate }).exec();
   }
 
   async findByIdWithDetails(

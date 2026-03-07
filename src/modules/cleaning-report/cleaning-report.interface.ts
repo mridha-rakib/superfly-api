@@ -6,6 +6,7 @@ export interface ICleaningReport extends Document {
   _id: Types.ObjectId;
   quoteId: Types.ObjectId | string;
   cleanerId: Types.ObjectId | string;
+  occurrenceDate: string;
   beforePhotos: string[];
   afterPhotos: string[];
   arrivalTime: Date;

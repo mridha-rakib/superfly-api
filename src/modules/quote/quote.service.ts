@@ -6,6 +6,7 @@ import { stripeService } from "@/services/stripe.service";
 import type { PaginateResult } from "@/ts/pagination.types";
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
@@ -25,6 +26,8 @@ import { QuotePricingService } from "./quote.pricing";
 import { QuoteRepository } from "./quote.repository";
 import { formatTimeTo12Hour, normalizeTimeTo24Hour } from "@/utils/time.utils";
 import type {
+  AdminQuoteNotificationListResponse,
+  AdminQuoteNotificationResponse,
   QuoteAssignCleanerPayload,
   QuoteCreatePayload,
   QuotePaymentIntentResponse,
@@ -33,6 +36,7 @@ import type {
   QuoteResponse,
   QuoteStatusUpdatePayload,
 } from "./quote.type";
+import type { IQuoteNotification } from "./quote-notification.interface";
 import type {
   QuoteCleaningSchedule,
   QuoteCleaningScheduleMonthlySpecificDates,
@@ -640,9 +644,34 @@ export class QuoteService {
       payload.generalContractorName?.trim() || undefined;
     const generalContractorPhone =
       payload.generalContractorPhone?.trim() || undefined;
-    const assignedCleanerIds = Array.from(
-      new Set(payload.assignedCleanerIds || []),
-    ).filter(Boolean);
+    const requestedAssignedCleanerIds = this.normalizeCleanerIds(
+      payload.assignedCleanerIds || [],
+    );
+    const normalizedCreatorRole = (createdByRole || "").toLowerCase();
+    const canAssignCleanersOnCreate =
+      normalizedCreatorRole === ROLES.ADMIN ||
+      normalizedCreatorRole === ROLES.SUPER_ADMIN;
+
+    if (requestedAssignedCleanerIds.length > 0 && !canAssignCleanersOnCreate) {
+      throw new ForbiddenException(
+        "Only admins can assign cleaners during request creation",
+      );
+    }
+
+    const assignedCleaners =
+      requestedAssignedCleanerIds.length > 0
+        ? await this.resolveCleanerUsers(requestedAssignedCleanerIds)
+        : [];
+    const assignedCleanerIds = assignedCleaners.map((cleaner) =>
+      cleaner._id.toString(),
+    );
+
+    if (assignedCleanerIds.length > 0) {
+      await this.assertCleanersAvailableForServiceDate(
+        assignedCleanerIds,
+        resolvedPrimarySchedule.serviceDate,
+      );
+    }
 
     const nameParts = this.splitFullName(contact.contactName!);
 
@@ -686,6 +715,24 @@ export class QuoteService {
     });
 
     const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
+
+    if (assignedCleaners.length > 0) {
+      try {
+        await this.notifyOnCleanerAssignmentChange({
+          quote: finalQuote,
+          quoteId: finalQuote._id.toString(),
+          cleaners: assignedCleaners,
+          assignmentType: "assigned",
+          notifyClient: false,
+        });
+      } catch (error) {
+        logger.warn(
+          { quoteId: finalQuote._id.toString(), cleanerIds: assignedCleanerIds, error },
+          "Cleaner assignment notification on create failed",
+        );
+      }
+    }
+
     return this.toResponse(finalQuote);
   }
 
@@ -712,6 +759,7 @@ export class QuoteService {
     const shouldNotifyCleanerOnClose =
       payload.status === QUOTE.STATUSES.CLOSED &&
       quote.status !== QUOTE.STATUSES.CLOSED;
+    const shouldNotifyAdminOnCompletion = shouldNotifyCleanerOnClose;
 
     const update: Partial<IQuote> = { status: payload.status };
 
@@ -739,7 +787,140 @@ export class QuoteService {
       }
     }
 
+    if (shouldNotifyAdminOnCompletion) {
+      try {
+        await this.notifyAdminBookingCompleted(updated, {
+          eventKey: "status_closed",
+        });
+      } catch (error) {
+        logger.warn(
+          { quoteId: updated._id.toString(), error },
+          "Admin completion notification failed",
+        );
+      }
+    }
+
     return this.toResponse(updated);
+  }
+
+  async listAdminNotifications(params: {
+    page?: number;
+    limit?: number;
+    onlyUnread?: boolean;
+  }): Promise<AdminQuoteNotificationListResponse> {
+    const page = Number(params.page) > 0 ? Number(params.page) : 1;
+    const limit = Number(params.limit) > 0 ? Number(params.limit) : 20;
+
+    const result = await this.notificationRepository.listAdminNotifications({
+      page,
+      limit,
+      onlyUnread: Boolean(params.onlyUnread),
+    });
+
+    return {
+      ...result,
+      items: result.items.map((item) => this.toAdminNotificationResponse(item)),
+    };
+  }
+
+  async markAdminNotificationAsRead(
+    notificationId: string,
+  ): Promise<AdminQuoteNotificationResponse> {
+    const updated = await this.notificationRepository.markAsRead(notificationId);
+    if (!updated) {
+      throw new NotFoundException("Notification not found");
+    }
+
+    return this.toAdminNotificationResponse(updated);
+  }
+
+  async markAllAdminNotificationsAsRead(): Promise<{ modifiedCount: number }> {
+    const modifiedCount = await this.notificationRepository.markAllAsRead();
+    return { modifiedCount };
+  }
+
+  async notifyAdminReportSubmitted(
+    quote: IQuote,
+    payload: {
+      reportId: string;
+      occurrenceDate: string;
+      submittedBy?: string;
+      submittedAt?: Date;
+    },
+  ): Promise<void> {
+    const clientName = this.resolveContactName(quote);
+    const requestedServices = this.resolveRequestedServices(quote);
+    const preferredTime = formatTimeTo12Hour(quote.preferredTime);
+    const serviceTypeLabel = this.serviceTypeLabel(quote.serviceType);
+    const submittedAt = payload.submittedAt || new Date();
+
+    await this.notificationRepository.createOnce({
+      quoteId: quote._id.toString(),
+      event: "report_submitted",
+      eventKey: payload.reportId,
+      title: "Job report submitted",
+      message: `A cleaner submitted a report for ${serviceTypeLabel} booking #${quote._id.toString()} on ${payload.occurrenceDate}.`,
+      serviceType: quote.serviceType,
+      clientName,
+      companyName: quote.companyName,
+      email: quote.email,
+      phoneNumber: quote.phoneNumber,
+      businessAddress: quote.businessAddress,
+      serviceDate: payload.occurrenceDate || quote.serviceDate,
+      preferredTime,
+      requestedServices,
+      notes: quote.notes,
+    });
+
+    realtimeService.emitAdminReportSubmitted({
+      quoteId: quote._id.toString(),
+      reportId: payload.reportId,
+      serviceType: serviceTypeLabel,
+      clientName,
+      serviceDate: payload.occurrenceDate || quote.serviceDate,
+      preferredTime,
+      submittedBy: payload.submittedBy,
+      submittedAt: submittedAt.toISOString(),
+    });
+  }
+
+  async notifyAdminBookingCompleted(
+    quote: IQuote,
+    payload?: { eventKey?: string; completedAt?: Date; status?: string },
+  ): Promise<void> {
+    const clientName = this.resolveContactName(quote);
+    const requestedServices = this.resolveRequestedServices(quote);
+    const preferredTime = formatTimeTo12Hour(quote.preferredTime);
+    const serviceTypeLabel = this.serviceTypeLabel(quote.serviceType);
+    const completedAt = payload?.completedAt || new Date();
+
+    await this.notificationRepository.createOnce({
+      quoteId: quote._id.toString(),
+      event: "booking_completed",
+      eventKey: payload?.eventKey || "completed",
+      title: "Booking completed",
+      message: `${serviceTypeLabel} booking #${quote._id.toString()} for ${clientName} is marked as completed.`,
+      serviceType: quote.serviceType,
+      clientName,
+      companyName: quote.companyName,
+      email: quote.email,
+      phoneNumber: quote.phoneNumber,
+      businessAddress: quote.businessAddress,
+      serviceDate: quote.serviceDate,
+      preferredTime,
+      requestedServices,
+      notes: quote.notes,
+    });
+
+    realtimeService.emitAdminBookingCompleted({
+      quoteId: quote._id.toString(),
+      serviceType: serviceTypeLabel,
+      clientName,
+      serviceDate: quote.serviceDate,
+      preferredTime,
+      status: payload?.status || quote.status,
+      completedAt: completedAt.toISOString(),
+    });
   }
 
   async assignCleaner(
@@ -765,24 +946,20 @@ export class QuoteService {
       throw new BadRequestException("Cleaner id is required");
     }
 
-    const uniqueCleanerIds = Array.from(new Set(cleanerIds));
+    const uniqueCleanerIds = this.normalizeCleanerIds(cleanerIds);
+    if (uniqueCleanerIds.length === 0) {
+      throw new BadRequestException("Cleaner id is required");
+    }
     const assignmentChanged = !this.haveSameIdSet(
       previousCleanerIds,
       uniqueCleanerIds,
     );
-    const cleaners = await Promise.all(
-      uniqueCleanerIds.map(async (id) => {
-        const cleaner = await this.userService.getById(id);
-        if (!cleaner) {
-          throw new NotFoundException(`Cleaner not found: ${id}`);
-        }
-        if (cleaner.role !== ROLES.CLEANER) {
-          throw new BadRequestException(
-            `Assigned user is not a cleaner: ${id}`,
-          );
-        }
-        return cleaner;
-      }),
+    const cleaners = await this.resolveCleanerUsers(uniqueCleanerIds);
+
+    await this.assertCleanersAvailableForServiceDate(
+      uniqueCleanerIds,
+      quote.serviceDate,
+      quoteId,
     );
 
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
@@ -859,6 +1036,88 @@ export class QuoteService {
     );
   }
 
+  private normalizeCleanerIds(cleanerIds: string[]): string[] {
+    return Array.from(
+      new Set(
+        (Array.isArray(cleanerIds) ? cleanerIds : [])
+          .map((id) => id?.toString().trim())
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+  }
+
+  private async resolveCleanerUsers(cleanerIds: string[]): Promise<IUser[]> {
+    const uniqueCleanerIds = this.normalizeCleanerIds(cleanerIds);
+
+    return Promise.all(
+      uniqueCleanerIds.map(async (id) => {
+        const cleaner = await this.userService.getById(id);
+        if (!cleaner) {
+          throw new NotFoundException(`Cleaner not found: ${id}`);
+        }
+        if (cleaner.role !== ROLES.CLEANER) {
+          throw new BadRequestException(
+            `Assigned user is not a cleaner: ${id}`,
+          );
+        }
+        return cleaner;
+      }),
+    );
+  }
+
+  private async assertCleanersAvailableForServiceDate(
+    cleanerIds: string[],
+    serviceDate: string,
+    excludeQuoteId?: string,
+  ): Promise<void> {
+    const uniqueCleanerIds = this.normalizeCleanerIds(cleanerIds);
+    const normalizedServiceDate = serviceDate?.toString().trim();
+    if (!uniqueCleanerIds.length || !normalizedServiceDate) {
+      return;
+    }
+
+    const conflicts = await this.quoteRepository.findCleanerDateConflicts(
+      uniqueCleanerIds,
+      normalizedServiceDate,
+      excludeQuoteId,
+    );
+    if (!conflicts.length) {
+      return;
+    }
+
+    const requestedSet = new Set(uniqueCleanerIds.map((id) => id.toString()));
+    const conflictingCleanerIds = new Set<string>();
+
+    for (const conflict of conflicts) {
+      for (const cleanerId of this.extractAssignedCleanerIds(conflict)) {
+        if (requestedSet.has(cleanerId.toString())) {
+          conflictingCleanerIds.add(cleanerId.toString());
+        }
+      }
+    }
+
+    const conflictingNames: string[] = [];
+    for (const cleanerId of conflictingCleanerIds) {
+      try {
+        const cleaner = await this.userService.getById(cleanerId);
+        if (!cleaner) continue;
+        conflictingNames.push(
+          cleaner.fullName?.trim() || cleaner.email || cleanerId,
+        );
+      } catch {
+        conflictingNames.push(cleanerId);
+      }
+    }
+
+    const label = conflictingNames.length
+      ? conflictingNames.join(", ")
+      : "selected cleaner(s)";
+
+    throw new ConflictException(
+      `${label} already assigned to another booking on ${normalizedServiceDate}.`,
+    );
+  }
+
   private haveSameIdSet(left: string[], right: string[]): boolean {
     if (left.length !== right.length) return false;
     const leftSet = new Set(left.map(String));
@@ -870,8 +1129,10 @@ export class QuoteService {
     quoteId: string;
     cleaners: IUser[];
     assignmentType: "assigned" | "reassigned";
+    notifyClient?: boolean;
   }): Promise<void> {
-    const { quote, quoteId, cleaners, assignmentType } = params;
+    const { quote, quoteId, cleaners, assignmentType, notifyClient = true } =
+      params;
     const cleanerNames = cleaners
       .map((cleaner) => cleaner.fullName?.trim())
       .filter((name): name is string => Boolean(name));
@@ -907,7 +1168,7 @@ export class QuoteService {
     });
 
     const clientUserId = quote.userId?.toString();
-    if (clientUserId) {
+    if (notifyClient && clientUserId) {
       const cleanerNamesText = cleanerNames.length
         ? ` (${cleanerNames.join(", ")})`
         : "";
@@ -959,7 +1220,7 @@ export class QuoteService {
     });
 
     const clientEmail = quote.email?.trim().toLowerCase();
-    if (clientEmail) {
+    if (notifyClient && clientEmail) {
       emailTasks.push(
         this.emailService
           .sendClientCleanerAssignmentNotification({
@@ -1158,6 +1419,55 @@ export class QuoteService {
     if (!deleted) {
       throw new NotFoundException("Quote not found");
     }
+  }
+
+  async deleteQuotesBulk(
+    quoteIds: string[],
+  ): Promise<{ requestedCount: number; deletedCount: number; skippedIds: string[] }> {
+    const normalizedIds = Array.from(
+      new Set(
+        (Array.isArray(quoteIds) ? quoteIds : [])
+          .map((id) => id?.toString().trim())
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (!normalizedIds.length) {
+      throw new BadRequestException("At least one quote id is required");
+    }
+
+    const validObjectIds = normalizedIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    if (!validObjectIds.length) {
+      throw new BadRequestException("No valid quote ids provided");
+    }
+
+    const existingQuotes = await this.quoteRepository.find({
+      _id: { $in: validObjectIds },
+      isDeleted: { $ne: true },
+    });
+
+    const existingIdSet = new Set(
+      existingQuotes.map((quote) => quote._id.toString()),
+    );
+    const deletableIds = normalizedIds.filter((id) => existingIdSet.has(id));
+
+    if (!deletableIds.length) {
+      throw new NotFoundException("No active quotes found for the provided ids");
+    }
+
+    const deletedCount = await this.quoteRepository.softDeleteManyByIds(
+      deletableIds,
+    );
+    const skippedIds = normalizedIds.filter((id) => !existingIdSet.has(id));
+
+    return {
+      requestedCount: normalizedIds.length,
+      deletedCount,
+      skippedIds,
+    };
   }
 
   async getPaginated(
@@ -1585,10 +1895,14 @@ export class QuoteService {
     const requestedServices = this.resolveRequestedServices(quote);
     const clientName = this.resolveContactName(quote);
     const preferredTime = formatTimeTo12Hour(quote.preferredTime);
+    const serviceTypeLabel = this.serviceTypeLabel(quote.serviceType);
 
     await this.notificationRepository.createOnce({
       quoteId: quote._id.toString(),
       event: "quote_submitted",
+      eventKey: "created",
+      title: "New booking/quote created",
+      message: `${serviceTypeLabel} booking #${quote._id.toString()} was created by ${clientName}.`,
       serviceType: quote.serviceType,
       clientName,
       companyName: quote.companyName,
@@ -1601,22 +1915,16 @@ export class QuoteService {
       notes: quote.notes,
     });
 
-    const createdByRole = (quote.createdByRole || "").toLowerCase();
-    const isAdminCreated =
-      createdByRole === ROLES.ADMIN || createdByRole === ROLES.SUPER_ADMIN;
-
-    if (!isAdminCreated) {
-      realtimeService.emitAdminQuoteCreated({
-        quoteId: quote._id.toString(),
-        serviceType: this.serviceTypeLabel(quote.serviceType),
-        clientName,
-        clientEmail: quote.email,
-        serviceDate: quote.serviceDate,
-        preferredTime,
-        companyName: quote.companyName,
-        createdAt: new Date().toISOString(),
-      });
-    }
+    realtimeService.emitAdminQuoteCreated({
+      quoteId: quote._id.toString(),
+      serviceType: serviceTypeLabel,
+      clientName,
+      clientEmail: quote.email,
+      serviceDate: quote.serviceDate,
+      preferredTime,
+      companyName: quote.companyName,
+      createdAt: new Date().toISOString(),
+    });
 
     const update: Partial<IQuote> = {
       adminNotifiedAt: new Date(),
@@ -1723,7 +2031,7 @@ export class QuoteService {
     return "one-time";
   }
 
-  private normalizeScheduleMonths(months?: number[]): number[] {
+  private parseScheduleMonths(months?: number[]): number[] {
     const normalized = Array.from(
       new Set(
         (Array.isArray(months) ? months : [])
@@ -1732,12 +2040,118 @@ export class QuoteService {
       ),
     ).sort((a, b) => a - b);
 
+    return normalized;
+  }
+
+  private normalizeScheduleMonths(months?: number[]): number[] {
+    const normalized = this.parseScheduleMonths(months);
     return normalized.length ? normalized : [...QUOTE_SCHEDULE_MONTHS];
   }
 
-  private maxDayForMonths(months: number[]): number {
-    const limits = months.map((month) => MONTH_DAY_LIMITS[month] || 31);
-    return limits.length ? Math.max(...limits) : 31;
+  private maxDayForMonth(month: number): number {
+    return MONTH_DAY_LIMITS[month] || 31;
+  }
+
+  private normalizeDatesForMonth(dates: number[] | undefined, month: number): number[] {
+    const maxDay = this.maxDayForMonth(month);
+    return Array.from(
+      new Set(
+        (Array.isArray(dates) ? dates : [])
+          .map((value) => Number(value))
+          .filter(
+            (value) => Number.isInteger(value) && value >= 1 && value <= maxDay,
+          ),
+      ),
+    ).sort((a, b) => a - b);
+  }
+
+  private normalizeMonthDateSelections(
+    months: number[],
+    monthDateEntries?: Array<{ month: number; dates: number[] }>,
+    legacyDates?: number[],
+  ): Array<{ month: number; dates: number[] }> {
+    const fallbackDates = Array.from(
+      new Set(
+        (Array.isArray(legacyDates) ? legacyDates : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 1 && value <= 31),
+      ),
+    ).sort((a, b) => a - b);
+
+    const monthDateMap = new Map<number, number[]>();
+
+    if (Array.isArray(monthDateEntries) && monthDateEntries.length > 0) {
+      for (const entry of monthDateEntries) {
+        const month = Number(entry.month);
+        if (!months.includes(month)) {
+          continue;
+        }
+        const dates = this.normalizeDatesForMonth(entry.dates, month);
+        if (dates.length) {
+          monthDateMap.set(month, dates);
+        }
+      }
+    } else {
+      for (const month of months) {
+        const dates = this.normalizeDatesForMonth(fallbackDates, month);
+        if (dates.length) {
+          monthDateMap.set(month, dates);
+        }
+      }
+    }
+
+    const selections = months.map((month) => ({
+      month,
+      dates: monthDateMap.get(month) || [],
+    }));
+
+    const missingMonths = selections
+      .filter((entry) => entry.dates.length === 0)
+      .map((entry) => entry.month);
+    if (missingMonths.length) {
+      throw new BadRequestException(
+        "Each selected month must include at least one valid date",
+      );
+    }
+
+    return selections;
+  }
+
+  private resolveMonthlyDatesMap(
+    schedule: QuoteCleaningScheduleMonthlySpecificDates,
+  ): Map<number, number[]> {
+    const months = this.normalizeScheduleMonths(schedule.months);
+    const result = new Map<number, number[]>();
+
+    if (Array.isArray(schedule.month_dates) && schedule.month_dates.length > 0) {
+      for (const entry of schedule.month_dates) {
+        const month = Number(entry.month);
+        if (!months.includes(month)) {
+          continue;
+        }
+        const dates = this.normalizeDatesForMonth(entry.dates, month);
+        if (dates.length) {
+          result.set(month, dates);
+        }
+      }
+    } else {
+      const fallbackDates = Array.from(
+        new Set(
+          (Array.isArray(schedule.dates) ? schedule.dates : [])
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value >= 1 && value <= 31),
+        ),
+      ).sort((a, b) => a - b);
+
+      for (const month of months) {
+        const dates = this.normalizeDatesForMonth(fallbackDates, month);
+        if (dates.length) {
+          result.set(month, dates);
+        }
+      }
+    }
+
+    return result;
   }
 
   private normalizeCleaningSchedule(
@@ -1794,22 +2208,25 @@ export class QuoteService {
     }
 
     if (schedule.pattern_type === "specific_dates") {
-      const months = this.normalizeScheduleMonths(schedule.months);
-      const maxDay = this.maxDayForMonths(months);
+      const explicitMonths = this.parseScheduleMonths(schedule.months);
+      const monthDatesMonths = this.parseScheduleMonths(
+        Array.isArray(schedule.month_dates)
+          ? schedule.month_dates.map((entry) => Number(entry.month))
+          : [],
+      );
+      const months = explicitMonths.length
+        ? explicitMonths
+        : monthDatesMonths.length
+        ? monthDatesMonths
+        : [...QUOTE_SCHEDULE_MONTHS];
+      const month_dates = this.normalizeMonthDateSelections(
+        months,
+        schedule.month_dates,
+        schedule.dates,
+      );
       const dates = Array.from(
-        new Set(
-          schedule.dates
-            .map((value) => Number(value))
-            .filter(
-              (value) => Number.isInteger(value) && value >= 1 && value <= maxDay,
-            ),
-        ),
+        new Set(month_dates.flatMap((entry) => entry.dates)),
       ).sort((a, b) => a - b);
-      if (!dates.length) {
-        throw new BadRequestException(
-          "At least one monthly date valid for the selected months is required",
-        );
-      }
 
       const start_time = this.normalizeAndValidateTime(schedule.start_time);
       const end_time = this.normalizeAndValidateTime(schedule.end_time);
@@ -1819,6 +2236,7 @@ export class QuoteService {
         frequency: "monthly",
         pattern_type: "specific_dates",
         months,
+        month_dates,
         dates,
         start_time,
         end_time,
@@ -1970,19 +2388,20 @@ export class QuoteService {
     now: Date,
   ): string | null {
     const [hours, minutes] = schedule.start_time.split(":").map(Number);
-    const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
+    const monthDatesMap = this.resolveMonthlyDatesMap(schedule);
 
     for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
       const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
       const year = monthRef.getFullYear();
       const month = monthRef.getMonth();
       const monthValue = month + 1;
-      if (!monthSet.has(monthValue)) {
+      const selectedDates = monthDatesMap.get(monthValue) || [];
+      if (!selectedDates.length) {
         continue;
       }
       const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-      for (const selectedDay of schedule.dates) {
+      for (const selectedDay of selectedDates) {
         if (selectedDay > daysInMonth) {
           continue;
         }
@@ -2162,6 +2581,36 @@ export class QuoteService {
     const month = String(value.getMonth() + 1).padStart(2, "0");
     const day = String(value.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
+  }
+
+  private toAdminNotificationResponse(
+    notification: IQuoteNotification,
+  ): AdminQuoteNotificationResponse {
+    return {
+      _id: notification._id.toString(),
+      quoteId:
+        typeof notification.quoteId === "string"
+          ? notification.quoteId
+          : notification.quoteId?.toString() || "",
+      event: notification.event,
+      eventKey: notification.eventKey || "default",
+      title: notification.title,
+      message: notification.message,
+      serviceType: notification.serviceType,
+      clientName: notification.clientName,
+      companyName: notification.companyName,
+      email: notification.email,
+      phoneNumber: notification.phoneNumber,
+      businessAddress: notification.businessAddress,
+      serviceDate: notification.serviceDate,
+      preferredTime: notification.preferredTime,
+      requestedServices: notification.requestedServices || [],
+      notes: notification.notes,
+      isRead: Boolean(notification.isRead),
+      readAt: notification.readAt,
+      createdAt: notification.createdAt,
+      updatedAt: notification.updatedAt,
+    };
   }
 
   private resolveRequestedServices(quote: IQuote): string[] {

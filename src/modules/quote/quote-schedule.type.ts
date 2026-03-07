@@ -23,6 +23,10 @@ export const QUOTE_SCHEDULE_MONTHS = [
 export type QuoteScheduleWeekday = (typeof QUOTE_SCHEDULE_WEEKDAYS)[number];
 export type QuoteScheduleMonthWeek = (typeof QUOTE_SCHEDULE_MONTH_WEEKS)[number];
 export type QuoteScheduleMonth = number;
+export type QuoteScheduleMonthDates = {
+  month: QuoteScheduleMonth;
+  dates: number[];
+};
 
 export type QuoteCleaningScheduleOneTime = {
   frequency: "one_time";
@@ -45,7 +49,8 @@ export type QuoteCleaningScheduleMonthlySpecificDates = {
   frequency: "monthly";
   pattern_type: "specific_dates";
   months?: QuoteScheduleMonth[];
-  dates: number[];
+  dates?: number[];
+  month_dates?: QuoteScheduleMonthDates[];
   start_time: string;
   end_time: string;
 };
