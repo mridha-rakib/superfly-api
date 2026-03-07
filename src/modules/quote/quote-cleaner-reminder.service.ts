@@ -62,11 +62,14 @@ export type QuoteCleanerReminderRunResult = {
 };
 
 export class QuoteCleanerReminderService {
+  /**
+   * Keep the legacy key to preserve idempotency with existing reminder records.
+   * Changing this value would resend reminders for the same occurrence after deployment.
+   */
   private static readonly REMINDER_TYPE: QuoteCleanerReminderType =
     "cleaner_24h_before";
-  private static readonly LEAD_TIME_MS = 24 * 60 * 60 * 1000;
-  private static readonly LOOKBACK_MS = 60 * 60 * 1000;
-  private static readonly LOOKAHEAD_MS = 0;
+  private static readonly MIN_LEAD_TIME_MS = 12 * 60 * 60 * 1000;
+  private static readonly MAX_LEAD_TIME_MS = 24 * 60 * 60 * 1000;
 
   private quoteRepository: QuoteRepository;
   private reminderRepository: QuoteCleanerReminderRepository;
@@ -88,24 +91,17 @@ export class QuoteCleanerReminderService {
   async processDueReminders(
     now: Date = new Date(),
   ): Promise<QuoteCleanerReminderRunResult> {
-    const reminderWindowStart = new Date(
-      now.getTime() - QuoteCleanerReminderService.LOOKBACK_MS,
-    );
-    const reminderWindowEnd = new Date(
-      now.getTime() + QuoteCleanerReminderService.LOOKAHEAD_MS,
-    );
     const occurrenceWindowStart = new Date(
-      reminderWindowStart.getTime() + QuoteCleanerReminderService.LEAD_TIME_MS,
+      now.getTime() + QuoteCleanerReminderService.MIN_LEAD_TIME_MS,
     );
     const occurrenceWindowEnd = new Date(
-      reminderWindowEnd.getTime() + QuoteCleanerReminderService.LEAD_TIME_MS,
+      now.getTime() + QuoteCleanerReminderService.MAX_LEAD_TIME_MS,
     );
     const maxServiceDate = this.toDateString(occurrenceWindowEnd);
 
-    const quotes =
-      await this.quoteRepository.findManualQuotesForCleanerReminder(
-        maxServiceDate,
-      );
+    const quotes = await this.quoteRepository.findQuotesForCleanerReminder(
+      maxServiceDate,
+    );
 
     const result: QuoteCleanerReminderRunResult = {
       scannedQuotes: quotes.length,
@@ -842,7 +838,7 @@ export class QuoteCleanerReminderService {
     if (serviceType === QUOTE.SERVICE_TYPES.POST_CONSTRUCTION) {
       return "Post-Construction Cleaning";
     }
-    return "Cleaning";
+    return "Residential Cleaning";
   }
 
   private frequencyLabel(frequency: ReminderFrequency): string {

@@ -3,8 +3,8 @@ import cron, { type ScheduledTask } from "node-cron";
 import { QuoteCleanerReminderService } from "./quote-cleaner-reminder.service";
 
 class QuoteCleanerReminderScheduler {
-  // Run each minute at second 5 to avoid top-of-minute event-loop contention.
-  private readonly cronExpression = "5 * * * * *";
+  // Run every 15 minutes.
+  private readonly cronExpression = "0 */15 * * * *";
   private readonly reminderService: QuoteCleanerReminderService;
   private task?: ScheduledTask;
   private isRunning = false;

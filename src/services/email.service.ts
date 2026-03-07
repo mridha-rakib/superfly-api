@@ -331,12 +331,12 @@ export class EmailService {
   async sendCleanerScheduleReminder(
     payload: CleanerScheduleReminderPayload,
   ): Promise<void> {
-    const subject = `${APP.NAME} job reminder: ${payload.serviceType} in 24 hours`;
+    const subject = `${APP.NAME} job reminder: ${payload.serviceType} in the next 12-24 hours`;
     const html = this.wrapTemplate(`
       <p>Hi ${this.safeText(payload.cleanerName || "there")},</p>
       <p>This is a reminder that you are assigned to an upcoming ${this.safeText(
         payload.serviceType,
-      )} job in 24 hours.</p>
+      )} job scheduled within the next 12 to 24 hours.</p>
       <p><strong>Scheduled for:</strong> ${this.safeText(
         payload.scheduledFor,
       )}</p>
@@ -360,7 +360,7 @@ export class EmailService {
       title: "Upcoming job reminder",
       ctaLabel: "View my jobs",
       ctaUrl: `${env.CLIENT_URL}/my-jobs`,
-      previewText: `Reminder: ${payload.serviceType} job in 24 hours.`,
+      previewText: `Reminder: ${payload.serviceType} job in the next 12-24 hours.`,
     });
 
     await this.send({
