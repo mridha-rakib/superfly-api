@@ -42,7 +42,7 @@ import type {
   QuoteScheduleMonthWeek,
   QuoteScheduleWeekday,
 } from "./quote-schedule.type";
-import { QUOTE_SCHEDULE_WEEKDAYS } from "./quote-schedule.type";
+import { QUOTE_SCHEDULE_MONTHS, QUOTE_SCHEDULE_WEEKDAYS } from "./quote-schedule.type";
 
 type QuoteContact = {
   firstName?: string;
@@ -65,6 +65,21 @@ const SCHEDULE_WEEKDAY_TO_INDEX: Record<QuoteScheduleWeekday, number> = {
   friday: 5,
   saturday: 6,
   sunday: 0,
+};
+
+const MONTH_DAY_LIMITS: Record<number, number> = {
+  1: 31,
+  2: 28,
+  3: 31,
+  4: 30,
+  5: 31,
+  6: 30,
+  7: 31,
+  8: 31,
+  9: 30,
+  10: 31,
+  11: 30,
+  12: 31,
 };
 
 export class QuoteService {
@@ -1708,6 +1723,23 @@ export class QuoteService {
     return "one-time";
   }
 
+  private normalizeScheduleMonths(months?: number[]): number[] {
+    const normalized = Array.from(
+      new Set(
+        (Array.isArray(months) ? months : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 1 && value <= 12),
+      ),
+    ).sort((a, b) => a - b);
+
+    return normalized.length ? normalized : [...QUOTE_SCHEDULE_MONTHS];
+  }
+
+  private maxDayForMonths(months: number[]): number {
+    const limits = months.map((month) => MONTH_DAY_LIMITS[month] || 31);
+    return limits.length ? Math.max(...limits) : 31;
+  }
+
   private normalizeCleaningSchedule(
     schedule?: QuoteCleaningSchedule,
   ): QuoteCleaningSchedule | undefined {
@@ -1762,16 +1794,20 @@ export class QuoteService {
     }
 
     if (schedule.pattern_type === "specific_dates") {
+      const months = this.normalizeScheduleMonths(schedule.months);
+      const maxDay = this.maxDayForMonths(months);
       const dates = Array.from(
         new Set(
           schedule.dates
             .map((value) => Number(value))
-            .filter((value) => Number.isInteger(value) && value >= 1 && value <= 31),
+            .filter(
+              (value) => Number.isInteger(value) && value >= 1 && value <= maxDay,
+            ),
         ),
       ).sort((a, b) => a - b);
       if (!dates.length) {
         throw new BadRequestException(
-          "At least one monthly date between 1 and 31 is required",
+          "At least one monthly date valid for the selected months is required",
         );
       }
 
@@ -1782,6 +1818,7 @@ export class QuoteService {
       return {
         frequency: "monthly",
         pattern_type: "specific_dates",
+        months,
         dates,
         start_time,
         end_time,
@@ -1800,10 +1837,12 @@ export class QuoteService {
     const start_time = this.normalizeAndValidateTime(schedule.start_time);
     const end_time = this.normalizeAndValidateTime(schedule.end_time);
     this.ensureEndAfterStart(start_time, end_time);
+    const months = this.normalizeScheduleMonths(schedule.months);
 
     return {
       frequency: "monthly",
       pattern_type: "weekday_pattern",
+      months,
       week,
       day,
       start_time,
@@ -1931,11 +1970,16 @@ export class QuoteService {
     now: Date,
   ): string | null {
     const [hours, minutes] = schedule.start_time.split(":").map(Number);
+    const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
 
     for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
       const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
       const year = monthRef.getFullYear();
       const month = monthRef.getMonth();
+      const monthValue = month + 1;
+      if (!monthSet.has(monthValue)) {
+        continue;
+      }
       const daysInMonth = new Date(year, month + 1, 0).getDate();
 
       for (const selectedDay of schedule.dates) {
@@ -1960,11 +2004,16 @@ export class QuoteService {
     now: Date,
   ): string | null {
     const [hours, minutes] = schedule.start_time.split(":").map(Number);
+    const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
 
     for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
       const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
       const year = monthRef.getFullYear();
       const month = monthRef.getMonth();
+      const monthValue = month + 1;
+      if (!monthSet.has(monthValue)) {
+        continue;
+      }
       const dayOfMonth = this.getWeekdayPatternDayOfMonth(
         year,
         month,

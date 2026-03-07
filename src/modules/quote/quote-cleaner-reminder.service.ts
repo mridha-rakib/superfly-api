@@ -15,6 +15,7 @@ import type {
   QuoteScheduleMonthWeek,
   QuoteScheduleWeekday,
 } from "./quote-schedule.type";
+import { QUOTE_SCHEDULE_MONTHS } from "./quote-schedule.type";
 
 type ReminderFrequency = "one-time" | "daily" | "weekly" | "monthly";
 
@@ -398,6 +399,7 @@ export class QuoteCleanerReminderService {
     }
 
     const dates = Array.from(new Set(schedule.dates)).sort((a, b) => a - b);
+    const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
     const occurrences: Date[] = [];
 
     const monthCursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
@@ -406,6 +408,11 @@ export class QuoteCleanerReminderService {
     while (monthCursor <= monthEnd) {
       const year = monthCursor.getFullYear();
       const month = monthCursor.getMonth();
+      const monthValue = month + 1;
+      if (!monthSet.has(monthValue)) {
+        monthCursor.setMonth(monthCursor.getMonth() + 1, 1);
+        continue;
+      }
       const daysInMonth = new Date(year, month + 1, 0).getDate();
 
       for (const day of dates) {
@@ -442,12 +449,18 @@ export class QuoteCleanerReminderService {
     }
 
     const occurrences: Date[] = [];
+    const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
     const monthCursor = new Date(windowStart.getFullYear(), windowStart.getMonth(), 1);
     const monthEnd = new Date(windowEnd.getFullYear(), windowEnd.getMonth(), 1);
 
     while (monthCursor <= monthEnd) {
       const year = monthCursor.getFullYear();
       const month = monthCursor.getMonth();
+      const monthValue = month + 1;
+      if (!monthSet.has(monthValue)) {
+        monthCursor.setMonth(monthCursor.getMonth() + 1, 1);
+        continue;
+      }
       const dayOfMonth = this.getWeekdayPatternDayOfMonth(
         year,
         month,
@@ -739,6 +752,18 @@ export class QuoteCleanerReminderService {
       value.getSeconds(),
       value.getMilliseconds(),
     );
+  }
+
+  private normalizeScheduleMonths(months?: number[]): number[] {
+    const normalized = Array.from(
+      new Set(
+        (Array.isArray(months) ? months : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 1 && value <= 12),
+      ),
+    ).sort((a, b) => a - b);
+
+    return normalized.length ? normalized : [...QUOTE_SCHEDULE_MONTHS];
   }
 
   private serviceTypeLabel(serviceType: string): string {

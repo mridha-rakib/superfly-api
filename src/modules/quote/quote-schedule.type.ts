@@ -16,8 +16,13 @@ export const QUOTE_SCHEDULE_MONTH_WEEKS = [
   "last",
 ] as const;
 
+export const QUOTE_SCHEDULE_MONTHS = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+] as const;
+
 export type QuoteScheduleWeekday = (typeof QUOTE_SCHEDULE_WEEKDAYS)[number];
 export type QuoteScheduleMonthWeek = (typeof QUOTE_SCHEDULE_MONTH_WEEKS)[number];
+export type QuoteScheduleMonth = number;
 
 export type QuoteCleaningScheduleOneTime = {
   frequency: "one_time";
@@ -39,6 +44,7 @@ export type QuoteCleaningScheduleWeekly = {
 export type QuoteCleaningScheduleMonthlySpecificDates = {
   frequency: "monthly";
   pattern_type: "specific_dates";
+  months?: QuoteScheduleMonth[];
   dates: number[];
   start_time: string;
   end_time: string;
@@ -47,6 +53,7 @@ export type QuoteCleaningScheduleMonthlySpecificDates = {
 export type QuoteCleaningScheduleMonthlyWeekdayPattern = {
   frequency: "monthly";
   pattern_type: "weekday_pattern";
+  months?: QuoteScheduleMonth[];
   week: QuoteScheduleMonthWeek;
   day: QuoteScheduleWeekday;
   start_time: string;

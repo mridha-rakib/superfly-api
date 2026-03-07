@@ -1,6 +1,7 @@
 import { QUOTE } from "@/constants/app.constants";
 import { z } from "zod";
 import {
+  QUOTE_SCHEDULE_MONTHS,
   QUOTE_SCHEDULE_MONTH_WEEKS,
   QUOTE_SCHEDULE_WEEKDAYS,
 } from "./quote-schedule.type";
@@ -30,6 +31,35 @@ const cleaningFrequencyOptions = z.enum([
 
 const scheduleWeekdayOptions = z.enum(QUOTE_SCHEDULE_WEEKDAYS);
 const scheduleMonthWeekOptions = z.enum(QUOTE_SCHEDULE_MONTH_WEEKS);
+const scheduleMonthOptions = z.coerce
+  .number()
+  .int()
+  .refine((value) => QUOTE_SCHEDULE_MONTHS.includes(value as (typeof QUOTE_SCHEDULE_MONTHS)[number]), {
+    message: "Month must be between 1 and 12",
+  });
+const scheduleMonthsSchema = z
+  .array(scheduleMonthOptions)
+  .min(1, "Select at least one month")
+  .optional();
+const MONTH_DAY_LIMITS: Record<number, number> = {
+  1: 31,
+  2: 28,
+  3: 31,
+  4: 30,
+  5: 31,
+  6: 30,
+  7: 31,
+  8: 31,
+  9: 30,
+  10: 31,
+  11: 30,
+  12: 31,
+};
+const maxDayForMonths = (months?: number[]) => {
+  const source = months?.length ? months : [...QUOTE_SCHEDULE_MONTHS];
+  const values = source.map((month) => MONTH_DAY_LIMITS[month] || 31);
+  return values.length ? Math.max(...values) : 31;
+};
 
 const dateStringSchema = z
   .string()
@@ -96,6 +126,7 @@ const monthlySpecificDatesCleaningScheduleSchema = z
   .object({
     frequency: z.literal("monthly"),
     pattern_type: z.literal("specific_dates"),
+    months: scheduleMonthsSchema,
     dates: z
       .array(z.coerce.number().int().min(1).max(31))
       .min(1, "Select at least one date"),
@@ -108,6 +139,21 @@ const monthlySpecificDatesCleaningScheduleSchema = z
         code: z.ZodIssueCode.custom,
         path: ["dates"],
         message: "Dates must be unique",
+      });
+    }
+    if (data.months && new Set(data.months).size !== data.months.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["months"],
+        message: "Months must be unique",
+      });
+    }
+    const maxDay = maxDayForMonths(data.months);
+    if (data.dates.some((value) => value > maxDay)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dates"],
+        message: "Selected date(s) are not valid for the selected month(s)",
       });
     }
 
@@ -124,12 +170,20 @@ const monthlyWeekdayPatternCleaningScheduleSchema = z
   .object({
     frequency: z.literal("monthly"),
     pattern_type: z.literal("weekday_pattern"),
+    months: scheduleMonthsSchema,
     week: scheduleMonthWeekOptions,
     day: scheduleWeekdayOptions,
     start_time: time24HourSchema,
     end_time: time24HourSchema,
   })
   .superRefine((data, ctx) => {
+    if (data.months && new Set(data.months).size !== data.months.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["months"],
+        message: "Months must be unique",
+      });
+    }
     if (toMinutes(data.end_time) <= toMinutes(data.start_time)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
