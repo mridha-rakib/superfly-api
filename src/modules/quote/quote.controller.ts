@@ -200,7 +200,7 @@ export class QuoteController {
         const response = PaginationHelper.formatResponse({
           ...result,
           data: result.data.map((quote) =>
-            this.quoteService.toCleanerFacingResponse(quote as any)
+            this.quoteService.toCleanerFacingResponse(quote as any, userId)
           ),
         });
 
@@ -218,7 +218,7 @@ export class QuoteController {
       };
       const quotes = await this.quoteService.getAll(filter);
       const data = quotes.map((quote) =>
-        this.quoteService.toCleanerFacingResponse(quote as any)
+        this.quoteService.toCleanerFacingResponse(quote as any, userId)
       );
       ApiResponse.success(res, data, "Assigned quotes fetched successfully");
     }
@@ -307,7 +307,8 @@ export class QuoteController {
     const validated = await zParse(quoteDetailSchema, req);
     const quote = await this.quoteService.getByIdForAccess(
       validated.params.quoteId,
-      req.user
+      req.user,
+      validated.query.occurrenceDate,
     );
 
     ApiResponse.success(res, quote, "Quote fetched successfully");
@@ -324,7 +325,7 @@ export class QuoteController {
     const quote = await this.quoteService.markArrived(validated.params.quoteId, {
       userId,
       role: role || "",
-    });
+    }, validated.query.occurrenceDate);
 
     ApiResponse.success(res, quote, "Cleaning status updated successfully");
   });

@@ -7,31 +7,44 @@ import { realtimeService } from "@/services/realtime.service";
 import { bootstrapApplication } from "./config/bootstrap";
 
 const port = env.PORT;
-const server = app.listen(port, async () => {
-  await connectDB();
-  await bootstrapApplication();
-  realtimeService.initialize(server);
-  logger.info(`Listening: http://localhost:${port}`);
+
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err }, "Uncaught Exception");
+  process.exit(1);
 });
 
-server.on("error", (err) => {
-  if ("code" in err && err.code === "EADDRINUSE") {
+process.on("unhandledRejection", (reason) => {
+  logger.fatal({ reason }, "Unhandled Rejection");
+  process.exit(1);
+});
+
+function handleServerError(err: NodeJS.ErrnoException): void {
+  if (err.code === "EADDRINUSE") {
     console.error(
-      `Port ${env.PORT} is already in use. Please choose another port or stop the process using it.`
+      `Port ${env.PORT} is already in use. Please choose another port or stop the process using it.`,
     );
   } else {
     console.error("Failed to start server:", err);
   }
 
-  process.on("uncaughtException", (err) => {
-    logger.fatal({ err }, "Uncaught Exception");
-    process.exit(1);
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    logger.fatal({ reason }, "Unhandled Rejection");
-    process.exit(1);
-  });
-
   process.exit(1);
-});
+}
+
+async function startServer(): Promise<void> {
+  try {
+    await connectDB();
+    await bootstrapApplication();
+
+    const server = app.listen(port, () => {
+      realtimeService.initialize(server);
+      logger.info(`Listening: http://localhost:${port}`);
+    });
+
+    server.on("error", handleServerError);
+  } catch (error) {
+    logger.fatal({ err: error }, "Failed to start application");
+    process.exit(1);
+  }
+}
+
+void startServer();

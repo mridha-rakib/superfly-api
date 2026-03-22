@@ -21,13 +21,21 @@ import { UserService } from "../user/user.service";
 import type { IUser } from "../user/user.interface";
 import { QuoteNotificationRepository } from "./quote-notification.repository";
 import { QuotePaymentDraftRepository } from "./quote-payment.repository";
-import type { IQuote } from "./quote.interface";
+import type {
+  IQuote,
+  IQuoteCleanerOccurrenceProgress,
+  IQuoteCleanerProgress,
+} from "./quote.interface";
 import { QuotePricingService } from "./quote.pricing";
 import { QuoteRepository } from "./quote.repository";
 import { formatTimeTo12Hour, normalizeTimeTo24Hour } from "@/utils/time.utils";
 import type {
   AdminQuoteNotificationListResponse,
   AdminQuoteNotificationResponse,
+  QuoteCleanerOccurrenceProgressResponse,
+  QuoteCleanerProgressResponse,
+  QuoteCleanerProgressSummary,
+  QuoteOccurrenceProgressSummary,
   QuoteAssignCleanerPayload,
   QuoteCreatePayload,
   QuotePaymentIntentResponse,
@@ -665,6 +673,27 @@ export class QuoteService {
     const assignedCleanerIds = assignedCleaners.map((cleaner) =>
       cleaner._id.toString(),
     );
+    const cleanerSharePercentage =
+      Number.isFinite(totalPrice) &&
+      Number.isFinite(cleanerPrice) &&
+      Number(totalPrice) > 0 &&
+      Number(cleanerPrice) >= 0
+        ? Number(((Number(cleanerPrice) / Number(totalPrice)) * 100).toFixed(4))
+        : undefined;
+    const cleanerPercentage =
+      cleanerSharePercentage !== undefined && assignedCleanerIds.length > 0
+        ? Number((cleanerSharePercentage / assignedCleanerIds.length).toFixed(4))
+        : cleanerSharePercentage;
+
+    if (
+      cleaningSchedule?.frequency === "weekly" &&
+      assignedCleanerIds.length > 0 &&
+      !cleaningSchedule.repeat_until
+    ) {
+      throw new BadRequestException(
+        "Weekly bookings with assigned cleaners must include a repeat-until date",
+      );
+    }
 
     if (assignedCleanerIds.length > 0) {
       await this.assertCleanersAvailableForServiceDate(
@@ -694,6 +723,8 @@ export class QuoteService {
       cleanerEarningAmount: Number.isFinite(cleanerPrice)
         ? cleanerPrice
         : undefined,
+      cleanerSharePercentage,
+      cleanerPercentage,
       cleaningFrequency,
       cleaningSchedule,
       squareFoot:
@@ -714,7 +745,20 @@ export class QuoteService {
       currency: QUOTE.CURRENCY,
     });
 
-    const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
+    const quoteWithProgress =
+      assignedCleanerIds.length > 0
+        ? (await this.quoteRepository.updateById(
+            quote._id.toString(),
+            this.buildManualOccurrenceProgressInitializationUpdate(
+              quote,
+              assignedCleanerIds,
+            ),
+          )) || quote
+        : quote;
+
+    const finalQuote = await this.notifyStakeholdersOnQuoteCreated(
+      quoteWithProgress,
+    );
 
     if (assignedCleaners.length > 0) {
       try {
@@ -972,12 +1016,28 @@ export class QuoteService {
       cleanerSharePercentage === undefined ||
       cleanerSharePercentage === null
     ) {
-      if (cleanerCount > 1) {
-        throw new BadRequestException(
-          "cleanerSharePercentage is required when assigning multiple cleaners",
-        );
+      if (this.isManualServiceType(serviceType)) {
+        const derivedSharePercentage =
+          this.asFiniteNumber(quote.cleanerSharePercentage) ??
+          (this.resolveQuoteTotal(quote) > 0
+            ? Number(
+                (
+                  (this.resolveManualCleanerPoolAmount(quote) /
+                    this.resolveQuoteTotal(quote)) *
+                  100
+                ).toFixed(4),
+              )
+            : undefined);
+        cleanerSharePercentage =
+          derivedSharePercentage ?? primaryCleaner.cleanerPercentage;
+      } else {
+        if (cleanerCount > 1) {
+          throw new BadRequestException(
+            "cleanerSharePercentage is required when assigning multiple cleaners",
+          );
+        }
+        cleanerSharePercentage = primaryCleaner.cleanerPercentage;
       }
-      cleanerSharePercentage = primaryCleaner.cleanerPercentage;
     }
 
     if (
@@ -1001,13 +1061,32 @@ export class QuoteService {
         ? Number((cleanerSharePercentage / cleanerCount).toFixed(4))
         : cleanerSharePercentage;
 
-    const updated = await this.quoteRepository.updateById(quoteId, {
-      assignedCleanerId: primaryCleaner._id,
-      assignedCleanerIds: cleaners.map((c) => c._id),
-      assignedCleanerAt: new Date(),
-      cleanerSharePercentage,
-      cleanerPercentage: perCleanerPercentage,
-    });
+    const updatePayload =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? this.buildResidentialAssignmentUpdate(
+            quote,
+            cleaners.map((cleaner) => cleaner._id.toString()),
+            cleanerSharePercentage,
+          )
+        : {
+            assignedCleanerId: primaryCleaner._id,
+            assignedCleanerIds: cleaners.map((c) => c._id),
+            assignedCleanerAt: new Date(),
+            cleanerSharePercentage,
+            cleanerPercentage: perCleanerPercentage,
+            ...this.buildManualOccurrenceProgressInitializationUpdate(
+              {
+                ...quote,
+                assignedCleanerId: primaryCleaner._id,
+                assignedCleanerIds: cleaners.map((c) => c._id),
+                cleanerSharePercentage,
+                cleanerPercentage: perCleanerPercentage,
+              } as IQuote,
+              cleaners.map((cleaner) => cleaner._id.toString()),
+            ),
+          };
+
+    const updated = await this.quoteRepository.updateById(quoteId, updatePayload);
 
     if (!updated) {
       throw new NotFoundException("Quote not found");
@@ -1034,6 +1113,1246 @@ export class QuoteService {
         ].filter((id): id is string => Boolean(id)),
       ),
     );
+  }
+
+  getOccurrenceDatesForQuote(
+    quote: Pick<IQuote, "serviceType" | "serviceDate" | "cleaningSchedule">,
+  ): string[] {
+    const fallbackDate = quote.serviceDate?.trim();
+    if (!fallbackDate) {
+      return [];
+    }
+
+    if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      return [fallbackDate];
+    }
+
+    const schedule = quote.cleaningSchedule as QuoteCleaningSchedule | undefined;
+    if (!schedule || typeof schedule !== "object" || !("frequency" in schedule)) {
+      return [fallbackDate];
+    }
+
+    if (schedule.frequency === "one_time") {
+      return [schedule.schedule?.date?.trim() || fallbackDate];
+    }
+
+    const baseDate = this.parseDateOnly(fallbackDate, "Quote service date");
+
+    if (schedule.frequency === "weekly") {
+      if (!schedule.repeat_until?.trim()) {
+        return [fallbackDate];
+      }
+
+      const repeatUntil = this.parseDateOnly(
+        schedule.repeat_until,
+        "Repeat until date",
+      );
+      const selectedDays = new Set<QuoteScheduleWeekday>(
+        (Array.isArray(schedule.days) ? schedule.days : [])
+          .map((day) => String(day || "").trim().toLowerCase() as QuoteScheduleWeekday)
+          .filter((day) => day in SCHEDULE_WEEKDAY_TO_INDEX),
+      );
+
+      if (!selectedDays.size) {
+        return [fallbackDate];
+      }
+
+      const dates: string[] = [];
+      let cursor = this.startOfDay(baseDate);
+      const end = this.startOfDay(repeatUntil);
+
+      while (cursor <= end) {
+        const weekday = this.weekdayFromDate(cursor);
+        if (selectedDays.has(weekday)) {
+          dates.push(this.toDateString(cursor));
+        }
+        cursor = this.addDays(cursor, 1);
+      }
+
+      return Array.from(new Set(dates)).sort((a, b) => (a > b ? 1 : -1));
+    }
+
+    const scheduleYear =
+      "year" in schedule && typeof schedule.year === "number"
+        ? schedule.year
+        : baseDate.getFullYear();
+
+    if (
+      schedule.frequency === "monthly" &&
+      schedule.pattern_type === "specific_dates"
+    ) {
+      const monthDatesMap = this.resolveMonthlyDatesMap(schedule);
+      const months = this.normalizeScheduleMonths(schedule.months);
+      const dates: string[] = [];
+
+      months.forEach((monthValue) => {
+        const days = monthDatesMap.get(monthValue) || [];
+        days.forEach((day) => {
+          const candidate = new Date(scheduleYear, monthValue - 1, day);
+          if (
+            candidate.getFullYear() === scheduleYear &&
+            candidate.getMonth() === monthValue - 1 &&
+            this.startOfDay(candidate) >= this.startOfDay(baseDate)
+          ) {
+            dates.push(this.toDateString(candidate));
+          }
+        });
+      });
+
+      return Array.from(new Set(dates)).sort((a, b) => (a > b ? 1 : -1));
+    }
+
+    if (
+      schedule.frequency === "monthly" &&
+      schedule.pattern_type === "weekday_pattern"
+    ) {
+      const months = this.normalizeScheduleMonths(schedule.months);
+      const week = String(schedule.week || "").trim().toLowerCase() as QuoteScheduleMonthWeek;
+      const day = String(schedule.day || "").trim().toLowerCase() as QuoteScheduleWeekday;
+      const dates: string[] = [];
+
+      months.forEach((monthValue) => {
+        const dayOfMonth = this.getWeekdayPatternDayOfMonth(
+          scheduleYear,
+          monthValue - 1,
+          week,
+          day,
+        );
+
+        if (!dayOfMonth) {
+          return;
+        }
+
+        const candidate = new Date(scheduleYear, monthValue - 1, dayOfMonth);
+        if (
+          candidate.getFullYear() === scheduleYear &&
+          candidate.getMonth() === monthValue - 1 &&
+          this.startOfDay(candidate) >= this.startOfDay(baseDate)
+        ) {
+          dates.push(this.toDateString(candidate));
+        }
+      });
+
+      return Array.from(new Set(dates)).sort((a, b) => (a > b ? 1 : -1));
+    }
+
+    return [fallbackDate];
+  }
+
+  getCleanerOccurrenceProgress(
+    quote: IQuote,
+  ): IQuoteCleanerOccurrenceProgress[] {
+    const existingOccurrenceProgress = Array.isArray(quote.cleanerOccurrenceProgress)
+      ? quote.cleanerOccurrenceProgress
+      : [];
+
+    if (existingOccurrenceProgress.length) {
+      return existingOccurrenceProgress
+        .filter((entry) => entry?.cleanerId && entry?.occurrenceDate)
+        .map((entry) => ({
+          ...entry,
+          occurrenceDate: entry.occurrenceDate.trim(),
+          cleaningStatus:
+            entry.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING,
+          paymentStatus:
+            entry.paymentStatus ||
+            (entry.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
+              ? "paid"
+              : "pending"),
+        }));
+    }
+
+    if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      return this.getResidentialCleanerProgress(quote).map((entry) => ({
+        ...entry,
+        occurrenceDate: quote.serviceDate,
+      }));
+    }
+
+    return [];
+  }
+
+  private resolveManualCleanerPoolAmount(quote: IQuote): number {
+    const directAmount = this.asFiniteNumber(quote.cleanerEarningAmount);
+    if (directAmount !== undefined) {
+      return Number(directAmount.toFixed(2));
+    }
+
+    const totalPrice = this.resolveQuoteTotal(quote);
+    const sharePercentage = this.asFiniteNumber(quote.cleanerSharePercentage);
+    if (
+      totalPrice > 0 &&
+      sharePercentage !== undefined &&
+      sharePercentage > 0
+    ) {
+      return Number(((totalPrice * sharePercentage) / 100).toFixed(2));
+    }
+
+    return 0;
+  }
+
+  private toCents(amount?: number): number {
+    return Math.round((this.asFiniteNumber(amount) || 0) * 100);
+  }
+
+  private fromCents(amountCents: number): number {
+    return Number((amountCents / 100).toFixed(2));
+  }
+
+  private splitCentsEvenly(totalCents: number, count: number): number[] {
+    if (count <= 0) {
+      return [];
+    }
+
+    const base = Math.floor(totalCents / count);
+    const remainder = totalCents - base * count;
+
+    return Array.from({ length: count }, (_, index) =>
+      base + (index < remainder ? 1 : 0),
+    );
+  }
+
+  private buildManualOccurrenceProgressEntries(
+    quote: IQuote,
+    cleanerIds?: string[],
+    existingEntries?: IQuoteCleanerOccurrenceProgress[],
+  ): IQuoteCleanerOccurrenceProgress[] {
+    const assignedCleanerIds = this.normalizeCleanerIds(
+      cleanerIds || this.extractAssignedCleanerIds(quote),
+    );
+    const occurrenceDates = this.getOccurrenceDatesForQuote(quote);
+
+    if (!assignedCleanerIds.length || !occurrenceDates.length) {
+      return [];
+    }
+
+    const cleanerCount = Math.max(assignedCleanerIds.length, 1);
+    const occurrenceCount = Math.max(occurrenceDates.length, 1);
+    const totalCleanerPool = this.resolveManualCleanerPoolAmount(quote);
+    const totalPrice = this.resolveQuoteTotal(quote);
+    const perCleanerTotalCents = this.splitCentsEvenly(
+      this.toCents(totalCleanerPool),
+      cleanerCount,
+    );
+    const existingMap = new Map(
+      (existingEntries || []).map((entry) => [
+        `${entry.cleanerId.toString()}:${entry.occurrenceDate}`,
+        entry,
+      ]),
+    );
+
+    return assignedCleanerIds.flatMap((cleanerId, cleanerIndex) => {
+      const cleanerTotalAmount = this.fromCents(
+        perCleanerTotalCents[cleanerIndex] || 0,
+      );
+      const perOccurrenceCents = this.splitCentsEvenly(
+        perCleanerTotalCents[cleanerIndex] || 0,
+        occurrenceCount,
+      );
+      const cleanerPercentage =
+        totalPrice > 0 && cleanerTotalAmount > 0
+          ? Number(((cleanerTotalAmount / totalPrice) * 100).toFixed(4))
+          : this.asFiniteNumber(quote.cleanerPercentage);
+
+      return occurrenceDates.map((occurrenceDate, occurrenceIndex) => {
+        const current = existingMap.get(`${cleanerId}:${occurrenceDate}`);
+        const occurrenceAmount = this.fromCents(
+          perOccurrenceCents[occurrenceIndex] || 0,
+        );
+        const occurrencePercentage =
+          totalPrice > 0 && occurrenceAmount > 0
+            ? Number(((occurrenceAmount / totalPrice) * 100).toFixed(4))
+            : cleanerPercentage;
+
+        return {
+          cleanerId,
+          occurrenceDate,
+          cleaningStatus:
+            current?.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING,
+          reportStatus: current?.reportStatus,
+          reportId: current?.reportId,
+          reportSubmittedAt: current?.reportSubmittedAt,
+          reportApprovedAt: current?.reportApprovedAt,
+          arrivalMarkedAt: current?.arrivalMarkedAt,
+          paymentStatus:
+            current?.paymentStatus ||
+            (current?.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
+              ? "paid"
+              : "pending"),
+          paidAt: current?.paidAt,
+          cleanerPercentage:
+            this.asFiniteNumber(current?.cleanerPercentage) ??
+            occurrencePercentage,
+          cleanerEarningAmount:
+            this.asFiniteNumber(current?.cleanerEarningAmount) ??
+            occurrenceAmount,
+        } as IQuoteCleanerOccurrenceProgress;
+      });
+    });
+  }
+
+  private getNormalizedCleanerProgress(quote: IQuote): IQuoteCleanerProgress[] {
+    if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      return this.getResidentialCleanerProgress(quote);
+    }
+
+    const occurrenceProgress = this.getCleanerOccurrenceProgress(quote);
+    if (occurrenceProgress.length > 0) {
+      return this.buildCleanerProgressFromOccurrences(quote, occurrenceProgress);
+    }
+
+    return Array.isArray(quote.cleanerProgress) ? quote.cleanerProgress : [];
+  }
+
+  getResidentialCleanerProgress(quote: IQuote): IQuoteCleanerProgress[] {
+    const assignedCleanerIds = this.extractAssignedCleanerIds(quote);
+    const existingProgress = Array.isArray(quote.cleanerProgress)
+      ? quote.cleanerProgress
+      : [];
+    const existingIds = existingProgress
+      .map((entry) => entry?.cleanerId?.toString())
+      .filter((id): id is string => Boolean(id));
+    const cleanerIds = Array.from(
+      new Set(
+        (assignedCleanerIds.length ? assignedCleanerIds : existingIds).concat(
+          existingIds,
+        ),
+      ),
+    );
+
+    if (!cleanerIds.length) {
+      return [];
+    }
+
+    const cleanerCount = cleanerIds.length;
+    const totalSharePct = this.asFiniteNumber(quote.cleanerSharePercentage);
+    const fallbackCleanerPct =
+      this.asFiniteNumber(quote.cleanerPercentage) ??
+      (totalSharePct !== undefined
+        ? Number((totalSharePct / Math.max(cleanerCount, 1)).toFixed(4))
+        : undefined);
+    const fallbackCleanerAmount = this.resolveResidentialCleanerAmount(
+      quote,
+      fallbackCleanerPct,
+    );
+    const progressMap = new Map(
+      existingProgress
+        .filter((entry) => entry?.cleanerId)
+        .map((entry) => [entry.cleanerId.toString(), entry]),
+    );
+    const legacySubmittedBy = quote.reportSubmittedBy?.toString();
+    const legacyIsApproved =
+      quote.reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
+      quote.status === QUOTE.STATUSES.COMPLETED ||
+      quote.status === QUOTE.STATUSES.REVIEWED;
+    const legacyIsPending =
+      quote.reportStatus === QUOTE.REPORT_STATUSES.PENDING ||
+      quote.cleaningStatus === QUOTE.CLEANING_STATUSES.COMPLETED;
+    const legacyInProgress =
+      quote.cleaningStatus === QUOTE.CLEANING_STATUSES.IN_PROGRESS;
+    const legacyInProgressCleanerId =
+      cleanerIds.length === 1 ? cleanerIds[0] : quote.assignedCleanerId?.toString();
+
+    return cleanerIds.map((cleanerId) => {
+      const current = progressMap.get(cleanerId);
+      if (current) {
+        return {
+          cleanerId,
+          cleaningStatus:
+            current.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING,
+          reportStatus: current.reportStatus,
+          reportId: current.reportId,
+          reportSubmittedAt: current.reportSubmittedAt,
+          reportApprovedAt: current.reportApprovedAt,
+          arrivalMarkedAt: current.arrivalMarkedAt,
+          paymentStatus:
+            current.paymentStatus ||
+            (current.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
+              ? "paid"
+              : "pending"),
+          paidAt: current.paidAt,
+          cleanerPercentage:
+            this.asFiniteNumber(current.cleanerPercentage) ??
+            fallbackCleanerPct,
+          cleanerEarningAmount:
+            this.asFiniteNumber(current.cleanerEarningAmount) ??
+            fallbackCleanerAmount,
+        };
+      }
+
+      const legacyEntry: IQuoteCleanerProgress = {
+        cleanerId,
+        cleaningStatus: QUOTE.CLEANING_STATUSES.PENDING,
+        paymentStatus: "pending",
+        cleanerPercentage: fallbackCleanerPct,
+        cleanerEarningAmount: fallbackCleanerAmount,
+      };
+
+      if (legacyIsApproved) {
+        legacyEntry.cleaningStatus = QUOTE.CLEANING_STATUSES.COMPLETED;
+        legacyEntry.reportStatus = QUOTE.REPORT_STATUSES.APPROVED;
+        legacyEntry.reportSubmittedAt = quote.reportSubmittedAt || quote.updatedAt;
+        legacyEntry.reportApprovedAt = quote.updatedAt || quote.paidAt;
+        legacyEntry.paymentStatus = "paid";
+        legacyEntry.paidAt = quote.updatedAt || quote.paidAt;
+      } else if (legacyIsPending) {
+        const shouldMarkSubmitted =
+          cleanerIds.length === 1 ||
+          !legacySubmittedBy ||
+          legacySubmittedBy === cleanerId;
+        if (shouldMarkSubmitted) {
+          legacyEntry.cleaningStatus = QUOTE.CLEANING_STATUSES.COMPLETED;
+          legacyEntry.reportStatus = QUOTE.REPORT_STATUSES.PENDING;
+          legacyEntry.reportSubmittedAt = quote.reportSubmittedAt || quote.updatedAt;
+        }
+      } else if (
+        legacyInProgress &&
+        legacyInProgressCleanerId &&
+        legacyInProgressCleanerId === cleanerId
+      ) {
+        legacyEntry.cleaningStatus = QUOTE.CLEANING_STATUSES.IN_PROGRESS;
+        legacyEntry.arrivalMarkedAt = quote.updatedAt;
+      }
+
+      return legacyEntry;
+    });
+  }
+
+  buildResidentialAssignmentUpdate(
+    quote: IQuote,
+    cleanerIds: string[],
+    cleanerSharePercentage: number,
+  ): Partial<IQuote> {
+    const uniqueCleanerIds = this.normalizeCleanerIds(cleanerIds);
+    const perCleanerPercentage =
+      uniqueCleanerIds.length > 0
+        ? Number((cleanerSharePercentage / uniqueCleanerIds.length).toFixed(4))
+        : cleanerSharePercentage;
+    const perCleanerAmount = this.resolveResidentialCleanerAmount(
+      quote,
+      perCleanerPercentage,
+    );
+    const existingProgress = this.getResidentialCleanerProgress(quote);
+    const existingMap = new Map(
+      existingProgress.map((entry) => [entry.cleanerId.toString(), entry]),
+    );
+    const cleanerProgress = uniqueCleanerIds.map((cleanerId) => {
+      const current = existingMap.get(cleanerId);
+      return {
+        cleanerId,
+        cleaningStatus:
+          current?.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING,
+        reportStatus: current?.reportStatus,
+        reportId: current?.reportId,
+        reportSubmittedAt: current?.reportSubmittedAt,
+        reportApprovedAt: current?.reportApprovedAt,
+        arrivalMarkedAt: current?.arrivalMarkedAt,
+        paymentStatus:
+          current?.paymentStatus ||
+          (current?.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
+            ? "paid"
+            : "pending"),
+        paidAt: current?.paidAt,
+        cleanerPercentage: perCleanerPercentage,
+        cleanerEarningAmount: perCleanerAmount,
+      } satisfies IQuoteCleanerProgress;
+    });
+
+    return {
+      assignedCleanerId: uniqueCleanerIds[0] as any,
+      assignedCleanerIds: uniqueCleanerIds as any,
+      assignedCleanerAt: uniqueCleanerIds.length ? new Date() : undefined,
+      cleanerSharePercentage,
+      cleanerPercentage: perCleanerPercentage,
+      cleanerEarningAmount: perCleanerAmount,
+      ...this.buildResidentialAggregateUpdateFromProgress(quote, cleanerProgress),
+    };
+  }
+
+  buildResidentialArrivalUpdate(
+    quote: IQuote,
+    cleanerId: string,
+    arrivalMarkedAt: Date,
+  ): Partial<IQuote> {
+    const cleanerProgress = this.getResidentialCleanerProgress(quote).map(
+      (entry) =>
+        entry.cleanerId.toString() === cleanerId
+          ? {
+              ...entry,
+              cleaningStatus: QUOTE.CLEANING_STATUSES.IN_PROGRESS,
+              arrivalMarkedAt,
+            }
+          : entry,
+    );
+
+    return this.buildResidentialAggregateUpdateFromProgress(quote, cleanerProgress);
+  }
+
+  buildResidentialReportSubmissionUpdate(
+    quote: IQuote,
+    cleanerId: string,
+    reportId: string,
+    submittedAt: Date,
+  ): Partial<IQuote> {
+    const cleanerProgress = this.getResidentialCleanerProgress(quote).map(
+      (entry) =>
+        entry.cleanerId.toString() === cleanerId
+          ? {
+              ...entry,
+              cleaningStatus: QUOTE.CLEANING_STATUSES.COMPLETED,
+              reportStatus: QUOTE.REPORT_STATUSES.PENDING,
+              reportId,
+              reportSubmittedAt: submittedAt,
+              paymentStatus: "pending" as const,
+              paidAt: undefined,
+            }
+          : entry,
+    );
+
+    return this.buildResidentialAggregateUpdateFromProgress(quote, cleanerProgress);
+  }
+
+  buildResidentialReportApprovalUpdate(
+    quote: IQuote,
+    cleanerId: string,
+    reportId: string,
+    approvedAt: Date,
+  ): Partial<IQuote> {
+    const cleanerProgress = this.getResidentialCleanerProgress(quote).map(
+      (entry) =>
+        entry.cleanerId.toString() === cleanerId
+          ? {
+              ...entry,
+              cleaningStatus: QUOTE.CLEANING_STATUSES.COMPLETED,
+              reportStatus: QUOTE.REPORT_STATUSES.APPROVED,
+              reportId,
+              reportApprovedAt: approvedAt,
+              paymentStatus: "paid" as const,
+              paidAt: approvedAt,
+            }
+          : entry,
+    );
+
+    return this.buildResidentialAggregateUpdateFromProgress(quote, cleanerProgress);
+  }
+
+  resolveCleanerProgressForCleaner(
+    quote: IQuote,
+    cleanerId?: string,
+  ): IQuoteCleanerProgress | undefined {
+    if (!cleanerId) {
+      return undefined;
+    }
+
+    return this.getNormalizedCleanerProgress(quote).find(
+      (entry) => entry.cleanerId.toString() === cleanerId,
+    );
+  }
+
+  toCleanerProgressResponse(
+    quote: IQuote,
+    progress: IQuoteCleanerProgress,
+  ): QuoteCleanerProgressResponse {
+    if (this.isManualServiceType(quote.serviceType || "")) {
+      const occurrenceProgress = this.resolveOccurrenceProgressForCleaner(
+        quote,
+        progress.cleanerId.toString(),
+      );
+      const metrics = this.buildCleanerMetricsFromOccurrences(occurrenceProgress);
+      const totalPrice = this.resolveQuoteTotal(quote);
+      const totalAmount = Number(metrics.totalAmount.toFixed(2));
+      const paidAmount = Number(metrics.paidAmount.toFixed(2));
+      const pendingAmount = Number(Math.max(totalAmount - paidAmount, 0).toFixed(2));
+      const cleanerPercentage =
+        totalPrice > 0 && totalAmount > 0
+          ? Number(((totalAmount / totalPrice) * 100).toFixed(4))
+          : this.asFiniteNumber(progress.cleanerPercentage) ??
+            this.asFiniteNumber(quote.cleanerPercentage);
+
+      return {
+        cleanerId: progress.cleanerId.toString(),
+        cleaningStatus: progress.cleaningStatus,
+        reportStatus: progress.reportStatus,
+        cleanerStatus: this.deriveManualCleanerStatus(metrics),
+        reportId: progress.reportId?.toString(),
+        reportSubmittedAt: progress.reportSubmittedAt,
+        reportApprovedAt: progress.reportApprovedAt,
+        arrivalMarkedAt: progress.arrivalMarkedAt,
+        paymentStatus: paidAmount > 0 && paidAmount === totalAmount ? "paid" : "pending",
+        paidAt: progress.paidAt,
+        cleanerPercentage,
+        cleanerEarningAmount: totalAmount,
+        occurrenceCount: metrics.totalOccurrences,
+        approvedOccurrenceCount: metrics.completed,
+        pendingOccurrenceCount:
+          metrics.pending + metrics.inProgress + metrics.reportSubmitted,
+        inProgressOccurrenceCount: metrics.inProgress,
+        paidAmount,
+        pendingAmount,
+      };
+    }
+
+    return {
+      cleanerId: progress.cleanerId.toString(),
+      cleaningStatus: progress.cleaningStatus,
+      reportStatus: progress.reportStatus,
+      cleanerStatus: this.deriveCleanerProgressStatus(progress),
+      reportId: progress.reportId?.toString(),
+      reportSubmittedAt: progress.reportSubmittedAt,
+      reportApprovedAt: progress.reportApprovedAt,
+      arrivalMarkedAt: progress.arrivalMarkedAt,
+      paymentStatus: progress.paymentStatus,
+      paidAt: progress.paidAt,
+      cleanerPercentage:
+        this.asFiniteNumber(progress.cleanerPercentage) ??
+        this.asFiniteNumber(quote.cleanerPercentage),
+      cleanerEarningAmount:
+        this.asFiniteNumber(progress.cleanerEarningAmount) ??
+        this.resolveResidentialCleanerAmount(
+          quote,
+          this.asFiniteNumber(progress.cleanerPercentage) ??
+            this.asFiniteNumber(quote.cleanerPercentage),
+        ),
+    };
+  }
+
+  buildCleanerProgressSummary(quote: IQuote): QuoteCleanerProgressSummary | undefined {
+    const cleanerProgress = this.getNormalizedCleanerProgress(quote);
+    if (!cleanerProgress.length) {
+      return undefined;
+    }
+
+    return cleanerProgress.reduce<QuoteCleanerProgressSummary>(
+      (acc, entry) => {
+        const status = this.toCleanerProgressResponse(quote, entry).cleanerStatus;
+        acc.totalAssigned += 1;
+        if (status === "completed") {
+          acc.completed += 1;
+        } else if (status === "waiting-for-admin-approval") {
+          acc.reportSubmitted += 1;
+        } else if (status === "ongoing") {
+          acc.inProgress += 1;
+        } else {
+          acc.pending += 1;
+        }
+
+        if (entry.paymentStatus === "paid") {
+          acc.paid += 1;
+        } else {
+          acc.unpaid += 1;
+        }
+
+        return acc;
+      },
+      {
+        totalAssigned: 0,
+        pending: 0,
+        inProgress: 0,
+        reportSubmitted: 0,
+        completed: 0,
+        paid: 0,
+        unpaid: 0,
+      },
+    );
+  }
+
+  private buildResidentialAggregateUpdateFromProgress(
+    quote: IQuote,
+    cleanerProgress: IQuoteCleanerProgress[],
+  ): Partial<IQuote> {
+    const summary = cleanerProgress.reduce(
+      (acc, entry) => {
+        const status = this.deriveCleanerProgressStatus(entry);
+        if (status === "completed") {
+          acc.completed += 1;
+        } else if (status === "waiting-for-admin-approval") {
+          acc.reportSubmitted += 1;
+        } else if (status === "ongoing") {
+          acc.inProgress += 1;
+        } else {
+          acc.pending += 1;
+        }
+
+        if (entry.reportSubmittedAt) {
+          if (
+            !acc.latestSubmittedAt ||
+            entry.reportSubmittedAt > acc.latestSubmittedAt
+          ) {
+            acc.latestSubmittedAt = entry.reportSubmittedAt;
+            acc.latestSubmittedBy = entry.cleanerId.toString();
+          }
+        }
+
+        return acc;
+      },
+      {
+        completed: 0,
+        reportSubmitted: 0,
+        inProgress: 0,
+        pending: 0,
+        latestSubmittedAt: undefined as Date | undefined,
+        latestSubmittedBy: undefined as string | undefined,
+      },
+    );
+    const totalAssigned = cleanerProgress.length;
+    const allApproved = totalAssigned > 0 && summary.completed === totalAssigned;
+    const anySubmitted = summary.completed > 0 || summary.reportSubmitted > 0;
+    const hasStarted = anySubmitted || summary.inProgress > 0;
+    const nextStatus = allApproved
+      ? QUOTE.STATUSES.COMPLETED
+      : quote.paymentStatus === "paid"
+        ? QUOTE.STATUSES.PAID
+        : quote.status === QUOTE.STATUSES.COMPLETED
+          ? QUOTE.STATUSES.PAID
+          : quote.status;
+
+    return {
+      cleanerProgress,
+      cleanerPercentage:
+        this.asFiniteNumber(cleanerProgress[0]?.cleanerPercentage) ??
+        this.asFiniteNumber(quote.cleanerPercentage),
+      cleanerEarningAmount:
+        this.asFiniteNumber(cleanerProgress[0]?.cleanerEarningAmount) ??
+        this.asFiniteNumber(quote.cleanerEarningAmount),
+      cleaningStatus:
+        totalAssigned === 0
+          ? QUOTE.CLEANING_STATUSES.PENDING
+          : allApproved
+            ? QUOTE.CLEANING_STATUSES.COMPLETED
+            : summary.inProgress > 0
+              ? QUOTE.CLEANING_STATUSES.IN_PROGRESS
+              : anySubmitted
+                ? QUOTE.CLEANING_STATUSES.COMPLETED
+                : QUOTE.CLEANING_STATUSES.PENDING,
+      reportStatus:
+        totalAssigned === 0 || !anySubmitted
+          ? undefined
+          : allApproved
+            ? QUOTE.REPORT_STATUSES.APPROVED
+            : QUOTE.REPORT_STATUSES.PENDING,
+      reportSubmittedBy: summary.latestSubmittedBy as any,
+      reportSubmittedAt: summary.latestSubmittedAt,
+      status: hasStarted ? nextStatus : quote.status,
+    };
+  }
+
+  buildManualOccurrenceProgressInitializationUpdate(
+    quote: IQuote,
+    cleanerIds?: string[],
+  ): Partial<IQuote> {
+    const occurrenceProgress = this.buildManualOccurrenceProgressEntries(
+      quote,
+      cleanerIds,
+      this.getCleanerOccurrenceProgress(quote),
+    );
+
+    return this.buildManualAggregateUpdateFromOccurrenceProgress(
+      quote,
+      occurrenceProgress,
+    );
+  }
+
+  buildManualOccurrenceArrivalUpdate(
+    quote: IQuote,
+    cleanerId: string,
+    occurrenceDate: string,
+    arrivalMarkedAt: Date,
+  ): Partial<IQuote> {
+    const occurrenceProgress = this.getCleanerOccurrenceProgress(quote).map((entry) =>
+      entry.cleanerId.toString() === cleanerId &&
+      entry.occurrenceDate === occurrenceDate
+        ? {
+            ...entry,
+            cleaningStatus: QUOTE.CLEANING_STATUSES.IN_PROGRESS,
+            arrivalMarkedAt,
+          }
+        : entry,
+    );
+
+    return this.buildManualAggregateUpdateFromOccurrenceProgress(
+      quote,
+      occurrenceProgress,
+    );
+  }
+
+  buildManualReportSubmissionUpdate(
+    quote: IQuote,
+    cleanerId: string,
+    occurrenceDate: string,
+    reportId: string,
+    submittedAt: Date,
+  ): Partial<IQuote> {
+    const occurrenceProgress = this.getCleanerOccurrenceProgress(quote).map((entry) =>
+      entry.cleanerId.toString() === cleanerId &&
+      entry.occurrenceDate === occurrenceDate
+        ? {
+            ...entry,
+            cleaningStatus: QUOTE.CLEANING_STATUSES.COMPLETED,
+            reportStatus: QUOTE.REPORT_STATUSES.PENDING,
+            reportId,
+            reportSubmittedAt: submittedAt,
+            paymentStatus: "pending" as const,
+            paidAt: undefined,
+          }
+        : entry,
+    );
+
+    return this.buildManualAggregateUpdateFromOccurrenceProgress(
+      quote,
+      occurrenceProgress,
+    );
+  }
+
+  buildManualReportApprovalUpdate(
+    quote: IQuote,
+    cleanerId: string,
+    occurrenceDate: string,
+    reportId: string,
+    approvedAt: Date,
+  ): Partial<IQuote> {
+    const occurrenceProgress = this.getCleanerOccurrenceProgress(quote).map((entry) =>
+      entry.cleanerId.toString() === cleanerId &&
+      entry.occurrenceDate === occurrenceDate
+        ? {
+            ...entry,
+            cleaningStatus: QUOTE.CLEANING_STATUSES.COMPLETED,
+            reportStatus: QUOTE.REPORT_STATUSES.APPROVED,
+            reportId,
+            reportApprovedAt: approvedAt,
+            paymentStatus: "paid" as const,
+            paidAt: approvedAt,
+          }
+        : entry,
+    );
+
+    return this.buildManualAggregateUpdateFromOccurrenceProgress(
+      quote,
+      occurrenceProgress,
+    );
+  }
+
+  resolveOccurrenceProgressForCleaner(
+    quote: IQuote,
+    cleanerId?: string,
+  ): IQuoteCleanerOccurrenceProgress[] {
+    if (!cleanerId) {
+      return [];
+    }
+
+    return this.getCleanerOccurrenceProgress(quote).filter(
+      (entry) => entry.cleanerId.toString() === cleanerId,
+    );
+  }
+
+  resolveOccurrenceProgressForCleanerAndDate(
+    quote: IQuote,
+    cleanerId?: string,
+    occurrenceDate?: string,
+  ): IQuoteCleanerOccurrenceProgress | undefined {
+    if (!cleanerId || !occurrenceDate) {
+      return undefined;
+    }
+
+    return this.getCleanerOccurrenceProgress(quote).find(
+      (entry) =>
+        entry.cleanerId.toString() === cleanerId &&
+        entry.occurrenceDate === occurrenceDate,
+    );
+  }
+
+  toOccurrenceProgressResponse(
+    progress: IQuoteCleanerOccurrenceProgress,
+  ): QuoteCleanerOccurrenceProgressResponse {
+    return {
+      cleanerId: progress.cleanerId.toString(),
+      occurrenceDate: progress.occurrenceDate,
+      cleaningStatus: progress.cleaningStatus,
+      reportStatus: progress.reportStatus,
+      cleanerStatus: this.deriveOccurrenceProgressStatus(progress),
+      reportId: progress.reportId?.toString(),
+      reportSubmittedAt: progress.reportSubmittedAt,
+      reportApprovedAt: progress.reportApprovedAt,
+      arrivalMarkedAt: progress.arrivalMarkedAt,
+      paymentStatus: progress.paymentStatus,
+      paidAt: progress.paidAt,
+      cleanerPercentage: this.asFiniteNumber(progress.cleanerPercentage),
+      cleanerEarningAmount: this.asFiniteNumber(progress.cleanerEarningAmount),
+    };
+  }
+
+  buildOccurrenceProgressSummary(
+    quote: IQuote,
+  ): QuoteOccurrenceProgressSummary | undefined {
+    const occurrenceProgress = this.getCleanerOccurrenceProgress(quote);
+    if (!occurrenceProgress.length) {
+      return undefined;
+    }
+
+    const totalOccurrences = new Set(
+      occurrenceProgress.map((entry) => entry.occurrenceDate),
+    ).size;
+
+    return occurrenceProgress.reduce<QuoteOccurrenceProgressSummary>(
+      (acc, entry) => {
+        const status = this.deriveOccurrenceProgressStatus(entry);
+        acc.totalAssignments += 1;
+        if (status === "completed") {
+          acc.completed += 1;
+        } else if (status === "waiting-for-admin-approval") {
+          acc.reportSubmitted += 1;
+        } else if (status === "ongoing") {
+          acc.inProgress += 1;
+        } else {
+          acc.pending += 1;
+        }
+
+        if (entry.paymentStatus === "paid") {
+          acc.paid += 1;
+        } else {
+          acc.unpaid += 1;
+        }
+
+        return acc;
+      },
+      {
+        totalAssignments: 0,
+        pending: 0,
+        inProgress: 0,
+        reportSubmitted: 0,
+        completed: 0,
+        paid: 0,
+        unpaid: 0,
+        totalOccurrences,
+      },
+    );
+  }
+
+  private buildManualAggregateUpdateFromOccurrenceProgress(
+    quote: IQuote,
+    occurrenceProgress: IQuoteCleanerOccurrenceProgress[],
+  ): Partial<IQuote> {
+    const cleanerProgress = this.buildCleanerProgressFromOccurrences(
+      quote,
+      occurrenceProgress,
+    );
+    const occurrenceSummary = this.buildOccurrenceSummaryMetrics(occurrenceProgress);
+    const allApproved =
+      occurrenceSummary.totalAssignments > 0 &&
+      occurrenceSummary.completed === occurrenceSummary.totalAssignments;
+    const anySubmitted =
+      occurrenceSummary.completed > 0 || occurrenceSummary.reportSubmitted > 0;
+
+    return {
+      cleanerOccurrenceProgress: occurrenceProgress,
+      cleanerProgress,
+      cleaningStatus:
+        occurrenceSummary.totalAssignments === 0
+          ? QUOTE.CLEANING_STATUSES.PENDING
+          : allApproved
+            ? QUOTE.CLEANING_STATUSES.COMPLETED
+            : occurrenceSummary.inProgress > 0 || anySubmitted
+              ? QUOTE.CLEANING_STATUSES.IN_PROGRESS
+              : QUOTE.CLEANING_STATUSES.PENDING,
+      reportStatus:
+        occurrenceSummary.totalAssignments === 0 || !anySubmitted
+          ? undefined
+          : allApproved
+            ? QUOTE.REPORT_STATUSES.APPROVED
+            : QUOTE.REPORT_STATUSES.PENDING,
+      reportSubmittedBy: occurrenceSummary.latestSubmittedBy as any,
+      reportSubmittedAt: occurrenceSummary.latestSubmittedAt,
+      status: allApproved ? QUOTE.STATUSES.COMPLETED : quote.status,
+    };
+  }
+
+  private buildCleanerProgressFromOccurrences(
+    quote: IQuote,
+    occurrenceProgress: IQuoteCleanerOccurrenceProgress[],
+  ): IQuoteCleanerProgress[] {
+    const byCleaner = new Map<string, IQuoteCleanerOccurrenceProgress[]>();
+    occurrenceProgress.forEach((entry) => {
+      const cleanerId = entry.cleanerId.toString();
+      const items = byCleaner.get(cleanerId) || [];
+      items.push(entry);
+      byCleaner.set(cleanerId, items);
+    });
+
+    return Array.from(byCleaner.entries()).map(([cleanerId, entries]) => {
+      const metrics = this.buildCleanerMetricsFromOccurrences(entries);
+      const firstEntry = entries[0];
+      const totalPrice = this.resolveQuoteTotal(quote);
+      const totalAmount = Number(metrics.totalAmount.toFixed(2));
+
+      return {
+        cleanerId,
+        cleaningStatus:
+          metrics.completed === metrics.totalOccurrences
+            ? QUOTE.CLEANING_STATUSES.COMPLETED
+            : metrics.reportSubmitted > 0 &&
+                metrics.pending === 0 &&
+                metrics.inProgress === 0
+              ? QUOTE.CLEANING_STATUSES.COMPLETED
+              : metrics.inProgress > 0 ||
+                  metrics.reportSubmitted > 0 ||
+                  metrics.completed > 0
+              ? QUOTE.CLEANING_STATUSES.IN_PROGRESS
+              : QUOTE.CLEANING_STATUSES.PENDING,
+        reportStatus:
+          metrics.totalOccurrences > 0 && metrics.completed === metrics.totalOccurrences
+            ? QUOTE.REPORT_STATUSES.APPROVED
+            : metrics.reportSubmitted > 0 || metrics.completed > 0
+              ? QUOTE.REPORT_STATUSES.PENDING
+              : undefined,
+        reportSubmittedAt: metrics.latestSubmittedAt,
+        reportApprovedAt: metrics.latestApprovedAt,
+        arrivalMarkedAt: metrics.latestArrivalAt,
+        paymentStatus:
+          metrics.totalOccurrences > 0 && metrics.completed === metrics.totalOccurrences
+            ? "paid"
+            : "pending",
+        paidAt:
+          metrics.totalOccurrences > 0 && metrics.completed === metrics.totalOccurrences
+            ? metrics.latestApprovedAt
+            : undefined,
+        cleanerPercentage:
+          totalPrice > 0 && totalAmount > 0
+            ? Number(((totalAmount / totalPrice) * 100).toFixed(4))
+            : this.asFiniteNumber(firstEntry?.cleanerPercentage) ??
+              this.asFiniteNumber(quote.cleanerPercentage),
+        cleanerEarningAmount: totalAmount,
+      };
+    });
+  }
+
+  private buildCleanerMetricsFromOccurrences(
+    occurrenceProgress: IQuoteCleanerOccurrenceProgress[],
+  ): {
+    totalOccurrences: number;
+    completed: number;
+    reportSubmitted: number;
+    inProgress: number;
+    pending: number;
+    totalAmount: number;
+    paidAmount: number;
+    latestSubmittedAt?: Date;
+    latestApprovedAt?: Date;
+    latestArrivalAt?: Date;
+  } {
+    return occurrenceProgress.reduce(
+      (acc, entry) => {
+        const status = this.deriveOccurrenceProgressStatus(entry);
+        acc.totalOccurrences += 1;
+        const amount = this.asFiniteNumber(entry.cleanerEarningAmount) || 0;
+        acc.totalAmount += amount;
+        if (entry.paymentStatus === "paid") {
+          acc.paidAmount += amount;
+        }
+
+        if (status === "completed") {
+          acc.completed += 1;
+        } else if (status === "waiting-for-admin-approval") {
+          acc.reportSubmitted += 1;
+        } else if (status === "ongoing") {
+          acc.inProgress += 1;
+        } else {
+          acc.pending += 1;
+        }
+
+        if (
+          entry.reportSubmittedAt &&
+          (!acc.latestSubmittedAt || entry.reportSubmittedAt > acc.latestSubmittedAt)
+        ) {
+          acc.latestSubmittedAt = entry.reportSubmittedAt;
+        }
+
+        if (
+          entry.reportApprovedAt &&
+          (!acc.latestApprovedAt || entry.reportApprovedAt > acc.latestApprovedAt)
+        ) {
+          acc.latestApprovedAt = entry.reportApprovedAt;
+        }
+
+        if (
+          entry.arrivalMarkedAt &&
+          (!acc.latestArrivalAt || entry.arrivalMarkedAt > acc.latestArrivalAt)
+        ) {
+          acc.latestArrivalAt = entry.arrivalMarkedAt;
+        }
+
+        return acc;
+      },
+      {
+        totalOccurrences: 0,
+        completed: 0,
+        reportSubmitted: 0,
+        inProgress: 0,
+        pending: 0,
+        totalAmount: 0,
+        paidAmount: 0,
+        latestSubmittedAt: undefined as Date | undefined,
+        latestApprovedAt: undefined as Date | undefined,
+        latestArrivalAt: undefined as Date | undefined,
+      },
+    );
+  }
+
+  private buildOccurrenceSummaryMetrics(
+    occurrenceProgress: IQuoteCleanerOccurrenceProgress[],
+  ): QuoteOccurrenceProgressSummary & {
+    latestSubmittedAt?: Date;
+    latestSubmittedBy?: string;
+  } {
+    return occurrenceProgress.reduce(
+      (acc, entry) => {
+        const status = this.deriveOccurrenceProgressStatus(entry);
+        acc.totalAssignments += 1;
+        if (status === "completed") {
+          acc.completed += 1;
+        } else if (status === "waiting-for-admin-approval") {
+          acc.reportSubmitted += 1;
+        } else if (status === "ongoing") {
+          acc.inProgress += 1;
+        } else {
+          acc.pending += 1;
+        }
+
+        if (entry.paymentStatus === "paid") {
+          acc.paid += 1;
+        } else {
+          acc.unpaid += 1;
+        }
+
+        if (
+          entry.reportSubmittedAt &&
+          (!acc.latestSubmittedAt || entry.reportSubmittedAt > acc.latestSubmittedAt)
+        ) {
+          acc.latestSubmittedAt = entry.reportSubmittedAt;
+          acc.latestSubmittedBy = entry.cleanerId.toString();
+        }
+
+        return acc;
+      },
+      {
+        totalAssignments: 0,
+        pending: 0,
+        inProgress: 0,
+        reportSubmitted: 0,
+        completed: 0,
+        paid: 0,
+        unpaid: 0,
+        totalOccurrences: new Set(
+          occurrenceProgress.map((entry) => entry.occurrenceDate),
+        ).size,
+        latestSubmittedAt: undefined as Date | undefined,
+        latestSubmittedBy: undefined as string | undefined,
+      },
+    );
+  }
+
+  private deriveOccurrenceProgressStatus(
+    progress: IQuoteCleanerOccurrenceProgress,
+  ): string {
+    if (
+      progress.reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
+      progress.paymentStatus === "paid"
+    ) {
+      return "completed";
+    }
+
+    if (progress.reportStatus === QUOTE.REPORT_STATUSES.PENDING) {
+      return "waiting-for-admin-approval";
+    }
+
+    if (progress.cleaningStatus === QUOTE.CLEANING_STATUSES.IN_PROGRESS) {
+      return "ongoing";
+    }
+
+    return "pending";
+  }
+
+  private deriveManualCleanerStatus(metrics: {
+    totalOccurrences: number;
+    completed: number;
+    reportSubmitted: number;
+    inProgress: number;
+    pending: number;
+  }): string {
+    if (
+      metrics.totalOccurrences > 0 &&
+      metrics.completed === metrics.totalOccurrences
+    ) {
+      return "completed";
+    }
+
+    if (
+      metrics.reportSubmitted > 0 &&
+      metrics.pending === 0 &&
+      metrics.inProgress === 0
+    ) {
+      return "waiting-for-admin-approval";
+    }
+
+    if (
+      metrics.inProgress > 0 ||
+      metrics.reportSubmitted > 0 ||
+      metrics.completed > 0
+    ) {
+      return "ongoing";
+    }
+
+    return "pending";
+  }
+
+  private deriveCleanerProgressStatus(progress: IQuoteCleanerProgress): string {
+    if (
+      progress.reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
+      progress.paymentStatus === "paid"
+    ) {
+      return "completed";
+    }
+
+    if (progress.reportStatus === QUOTE.REPORT_STATUSES.PENDING) {
+      return "waiting-for-admin-approval";
+    }
+
+    if (progress.cleaningStatus === QUOTE.CLEANING_STATUSES.IN_PROGRESS) {
+      return "ongoing";
+    }
+
+    return "pending";
+  }
+
+  private resolveResidentialCleanerAmount(
+    quote: IQuote,
+    perCleanerPercentage?: number,
+  ): number | undefined {
+    const totalPrice = this.resolveQuoteTotal(quote);
+    if (
+      totalPrice > 0 &&
+      perCleanerPercentage !== undefined &&
+      perCleanerPercentage > 0
+    ) {
+      return Number(((totalPrice * perCleanerPercentage) / 100).toFixed(2));
+    }
+
+    const rawAmount = this.asFiniteNumber(quote.cleanerEarningAmount);
+    if (rawAmount !== undefined) {
+      return Number(rawAmount.toFixed(2));
+    }
+
+    return undefined;
+  }
+
+  private resolveQuoteTotal(quote: IQuote): number {
+    if (quote.totalPrice && quote.totalPrice > 0) {
+      return quote.totalPrice;
+    }
+
+    if (quote.paymentAmount && quote.paymentAmount > 0) {
+      return Number((quote.paymentAmount / 100).toFixed(2));
+    }
+
+    return 0;
   }
 
   private normalizeCleanerIds(cleanerIds: string[]): string[] {
@@ -1330,28 +2649,152 @@ export class QuoteService {
     await Promise.allSettled(emailTasks);
   }
 
-  toCleanerFacingResponse(quote: IQuote, base?: QuoteResponse): QuoteResponse {
+  toCleanerFacingResponse(
+    quote: IQuote,
+    cleanerId?: string,
+    occurrenceDateOrBase?: string | QuoteResponse,
+    maybeBase?: QuoteResponse,
+  ): QuoteResponse {
+    const occurrenceDate =
+      typeof occurrenceDateOrBase === "string" ? occurrenceDateOrBase : undefined;
+    const base =
+      typeof occurrenceDateOrBase === "string"
+        ? maybeBase
+        : occurrenceDateOrBase;
     const response = base || this.toResponse(quote);
-    const allocatedAmount = this.resolveCleanerAllocatedAmountForQuote(quote);
-    const isCompleted = this.isQuoteCompletedForCleanerPayment(quote);
+    const cleanerProgress = this.resolveCleanerProgressForCleaner(quote, cleanerId);
+    const cleanerOccurrenceProgress = this.resolveOccurrenceProgressForCleaner(
+      quote,
+      cleanerId,
+    );
+    const activeOccurrence = this.resolveOccurrenceProgressForCleanerAndDate(
+      quote,
+      cleanerId,
+      occurrenceDate,
+    );
+    const allocatedAmount = this.resolveCleanerAllocatedAmountForQuote(
+      quote,
+      cleanerId,
+    );
+    const isCompleted = this.isQuoteCompletedForCleanerPayment(quote, cleanerId);
+    const cleanerProgressResponse = cleanerProgress
+      ? this.toCleanerProgressResponse(quote, cleanerProgress)
+      : undefined;
+    const occurrenceProgressResponses = cleanerOccurrenceProgress.map((entry) =>
+      this.toOccurrenceProgressResponse(entry),
+    );
+    const occurrenceSummaryMetrics = cleanerOccurrenceProgress.length
+      ? this.buildOccurrenceSummaryMetrics(cleanerOccurrenceProgress)
+      : undefined;
+    const activeOccurrenceResponse = activeOccurrence
+      ? this.toOccurrenceProgressResponse(activeOccurrence)
+      : undefined;
 
     return {
       ...response,
-      cleanerEarningAmount: Number(allocatedAmount.toFixed(2)),
-      paymentStatus: isCompleted ? "paid" : "pending",
+      cleaningStatus:
+        activeOccurrence?.cleaningStatus ||
+        cleanerProgress?.cleaningStatus ||
+        response.cleaningStatus,
+      reportStatus:
+        activeOccurrence?.reportStatus ||
+        cleanerProgress?.reportStatus ||
+        response.reportStatus,
+      reportSubmittedAt:
+        activeOccurrence?.reportSubmittedAt ||
+        cleanerProgress?.reportSubmittedAt ||
+        response.reportSubmittedAt,
+      cleanerEarningAmount: Number(
+        (
+          this.asFiniteNumber(activeOccurrence?.cleanerEarningAmount) ??
+          allocatedAmount
+        ).toFixed(2),
+      ),
+      paymentStatus:
+        activeOccurrence?.paymentStatus ||
+        cleanerProgress?.paymentStatus ||
+        (isCompleted ? "paid" : "pending"),
+      cleanerPaidAmount:
+        cleanerProgressResponse?.paidAmount ?? response.cleanerPaidAmount,
+      cleanerPendingAmount:
+        cleanerProgressResponse?.pendingAmount ?? response.cleanerPendingAmount,
+      activeCleanerProgress: cleanerProgressResponse,
+      cleanerProgress: cleanerProgressResponse
+        ? [cleanerProgressResponse]
+        : response.cleanerProgress,
+      cleanerProgressSummary: cleanerProgressResponse
+        ? {
+            totalAssigned: 1,
+            pending: cleanerProgressResponse.cleanerStatus === "pending" ? 1 : 0,
+            inProgress: cleanerProgressResponse.cleanerStatus === "ongoing" ? 1 : 0,
+            reportSubmitted:
+              cleanerProgressResponse.cleanerStatus ===
+              "waiting-for-admin-approval"
+                ? 1
+                : 0,
+            completed:
+              cleanerProgressResponse.cleanerStatus === "completed" ? 1 : 0,
+            paid: cleanerProgressResponse.paymentStatus === "paid" ? 1 : 0,
+            unpaid: cleanerProgressResponse.paymentStatus === "paid" ? 0 : 1,
+          }
+        : response.cleanerProgressSummary,
+      occurrenceProgress: occurrenceProgressResponses.length
+        ? occurrenceProgressResponses
+        : response.occurrenceProgress,
+      occurrenceProgressSummary: occurrenceSummaryMetrics
+        ? {
+            totalAssignments: occurrenceSummaryMetrics.totalAssignments,
+            pending: occurrenceSummaryMetrics.pending,
+            inProgress: occurrenceSummaryMetrics.inProgress,
+            reportSubmitted: occurrenceSummaryMetrics.reportSubmitted,
+            completed: occurrenceSummaryMetrics.completed,
+            paid: occurrenceSummaryMetrics.paid,
+            unpaid: occurrenceSummaryMetrics.unpaid,
+            totalOccurrences: occurrenceSummaryMetrics.totalOccurrences,
+          }
+        : response.occurrenceProgressSummary,
+      activeOccurrenceProgress:
+        activeOccurrenceResponse || response.activeOccurrenceProgress,
+      cleanerStatus:
+        activeOccurrenceResponse?.cleanerStatus ||
+        cleanerProgressResponse?.cleanerStatus ||
+        response.cleanerStatus,
     };
   }
 
-  private isQuoteCompletedForCleanerPayment(quote: IQuote): boolean {
+  private isQuoteCompletedForCleanerPayment(
+    quote: IQuote,
+    cleanerId?: string,
+  ): boolean {
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
     const status = (quote.status || "").toLowerCase();
     const reportStatus = (quote.reportStatus || "").toLowerCase();
 
     if (serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
+      const cleanerProgress = this.resolveCleanerProgressForCleaner(quote, cleanerId);
+      if (cleanerProgress) {
+        return (
+          cleanerProgress.paymentStatus === "paid" ||
+          cleanerProgress.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
+        );
+      }
+
       return (
         reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
         status === QUOTE.STATUSES.COMPLETED ||
         status === QUOTE.STATUSES.REVIEWED
+      );
+    }
+
+    const occurrenceProgress = this.resolveOccurrenceProgressForCleaner(
+      quote,
+      cleanerId,
+    );
+    if (occurrenceProgress.length > 0) {
+      const metrics = this.buildCleanerMetricsFromOccurrences(occurrenceProgress);
+      return (
+        metrics.totalOccurrences > 0 &&
+        metrics.completed === metrics.totalOccurrences
       );
     }
 
@@ -1362,13 +2805,41 @@ export class QuoteService {
     );
   }
 
-  private resolveCleanerAllocatedAmountForQuote(quote: IQuote): number {
+  private resolveCleanerAllocatedAmountForQuote(
+    quote: IQuote,
+    cleanerId?: string,
+  ): number {
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    if (this.isManualServiceType(serviceType)) {
+      const occurrenceProgress = this.resolveOccurrenceProgressForCleaner(
+        quote,
+        cleanerId,
+      );
+      if (occurrenceProgress.length > 0) {
+        const metrics = this.buildCleanerMetricsFromOccurrences(occurrenceProgress);
+        return Number(metrics.totalAmount.toFixed(2));
+      }
+    }
+
+    const cleanerProgress = this.resolveCleanerProgressForCleaner(quote, cleanerId);
+    if (cleanerProgress) {
+      const progressAmount = this.asFiniteNumber(cleanerProgress.cleanerEarningAmount);
+      if (progressAmount !== undefined) {
+        return Number(progressAmount.toFixed(2));
+      }
+
+      const progressPct = this.asFiniteNumber(cleanerProgress.cleanerPercentage);
+      if (progressPct !== undefined) {
+        const totalPrice = this.resolveQuoteTotal(quote);
+        if (totalPrice > 0) {
+          return Number(((totalPrice * progressPct) / 100).toFixed(2));
+        }
+      }
+    }
+
     const cleanerCount = this.resolveAssignedCleanerCount(quote);
     const rawCleanerAmount = this.asFiniteNumber(quote.cleanerEarningAmount);
-    const totalPrice =
-      this.asFiniteNumber(quote.totalPrice) ??
-      this.asFiniteNumber(quote.paymentAmount);
+    const totalPrice = this.resolveQuoteTotal(quote) || undefined;
     const totalSharePct = this.asFiniteNumber(quote.cleanerSharePercentage);
     const perCleanerPct =
       this.asFiniteNumber(quote.cleanerPercentage) ??
@@ -1396,6 +2867,12 @@ export class QuoteService {
 
   private resolveAssignedCleanerCount(quote: IQuote): number {
     const ids = this.extractAssignedCleanerIds(quote);
+    if (!ids.length) {
+      const cleanerProgress = this.getNormalizedCleanerProgress(quote);
+      if (cleanerProgress.length) {
+        return cleanerProgress.length;
+      }
+    }
     return ids.length > 0 ? ids.length : 1;
   }
 
@@ -1507,13 +2984,32 @@ export class QuoteService {
 
     const result = quotes.reduce(
       (acc, quote) => {
-        const amount = this.resolveCleanerAllocatedAmountForQuote(quote as IQuote);
+        const occurrenceProgress = this.resolveOccurrenceProgressForCleaner(
+          quote as IQuote,
+          cleanerId,
+        );
+
+        if (occurrenceProgress.length > 0) {
+          const metrics = this.buildCleanerMetricsFromOccurrences(occurrenceProgress);
+          acc.totalJobs += 1;
+          acc.totalEarning += Number(metrics.totalAmount.toFixed(2));
+          acc.paidAmount += Number(metrics.paidAmount.toFixed(2));
+          acc.pendingAmount += Number(
+            Math.max(metrics.totalAmount - metrics.paidAmount, 0).toFixed(2),
+          );
+          return acc;
+        }
+
+        const amount = this.resolveCleanerAllocatedAmountForQuote(
+          quote as IQuote,
+          cleanerId,
+        );
         const roundedAmount = Number(amount.toFixed(2));
 
         acc.totalJobs += 1;
         acc.totalEarning += roundedAmount;
 
-        if (this.isQuoteCompletedForCleanerPayment(quote as IQuote)) {
+        if (this.isQuoteCompletedForCleanerPayment(quote as IQuote, cleanerId)) {
           acc.paidAmount += roundedAmount;
         } else {
           acc.pendingAmount += roundedAmount;
@@ -1536,6 +3032,7 @@ export class QuoteService {
   async getByIdForAccess(
     quoteId: string,
     requester: { userId: string; role: string },
+    occurrenceDate?: string,
   ): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
@@ -1548,8 +3045,7 @@ export class QuoteService {
       requester.role === ROLES.SUPER_ADMIN
     ) {
       let response = await this.buildResponseWithCleanerDetails(quote);
-      response = this.toCleanerFacingResponse(quote, response);
-      await this.attachCleaningReport(response, quote);
+      await this.attachCleaningReport(response, quote, undefined, occurrenceDate);
       return response;
     }
 
@@ -1565,9 +3061,23 @@ export class QuoteService {
       if (!isPrimary && !isInList) {
         throw new ForbiddenException("Cleaner is not assigned to this quote");
       }
-      const response = await this.buildResponseWithCleanerDetails(quote);
-      await this.attachCleaningReport(response, quote);
-      return response;
+      const response = await this.buildResponseWithCleanerDetails(
+        quote,
+        requester.userId,
+      );
+      const cleanerResponse = this.toCleanerFacingResponse(
+        quote,
+        requester.userId,
+        occurrenceDate,
+        response,
+      );
+      await this.attachCleaningReport(
+        cleanerResponse,
+        quote,
+        requester.userId,
+        occurrenceDate,
+      );
+      return cleanerResponse;
     }
 
     if (requester.role === ROLES.CLIENT) {
@@ -1575,7 +3085,7 @@ export class QuoteService {
         throw new ForbiddenException("Client does not own this quote");
       }
       const response = await this.buildResponseWithCleanerDetails(quote);
-      await this.attachCleaningReport(response, quote);
+      await this.attachCleaningReport(response, quote, undefined, occurrenceDate);
       return response;
     }
 
@@ -1584,6 +3094,7 @@ export class QuoteService {
 
   private async buildResponseWithCleanerDetails(
     quote: IQuote,
+    activeCleanerId?: string,
   ): Promise<QuoteResponse> {
     const response = this.toResponse(quote);
     const ids = [
@@ -1599,17 +3110,28 @@ export class QuoteService {
 
     try {
       const cleaners = await this.userService.getUsersByIds(ids);
+      const cleanerProgressMap = new Map(
+        (response.cleanerProgress || []).map((entry) => [entry.cleanerId, entry]),
+      );
       response.assignedCleaners = cleaners.map((c) => ({
         _id: c._id,
         fullName: c.fullName,
         email: c.email,
         phone: c.phone,
+        cleanerProgress: cleanerProgressMap.get(c._id.toString()),
       }));
     } catch (error) {
       logger.warn(
         { quoteId: quote._id.toString(), error },
         "Failed to load assigned cleaner details",
       );
+    }
+
+    if (activeCleanerId) {
+      response.activeCleanerProgress =
+        response.cleanerProgress?.find(
+          (entry) => entry.cleanerId === activeCleanerId,
+        ) || response.activeCleanerProgress;
     }
 
     return response;
@@ -1691,19 +3213,35 @@ export class QuoteService {
   private async attachCleaningReport(
     response: QuoteResponse,
     quote: IQuote,
+    cleanerId?: string,
+    occurrenceDate?: string,
   ): Promise<void> {
-    if (quote.serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
-      return;
-    }
-
-    const report = await this.cleaningReportRepository.findByQuoteId(
-      quote._id.toString(),
-    );
+    const report =
+      cleanerId && occurrenceDate
+        ? await this.cleaningReportRepository.findByQuoteAndOccurrence(
+            quote._id.toString(),
+            occurrenceDate,
+            cleanerId,
+          )
+        : occurrenceDate
+          ? await this.cleaningReportRepository.findByQuoteAndOccurrence(
+              quote._id.toString(),
+              occurrenceDate,
+            )
+          : cleanerId
+            ? await this.cleaningReportRepository.findByQuoteIdAndCleanerId(
+                quote._id.toString(),
+                cleanerId,
+              )
+            : await this.cleaningReportRepository.findByQuoteId(
+                quote._id.toString(),
+              );
     if (!report) {
       return;
     }
 
     response.cleaningReport = {
+      occurrenceDate: report.occurrenceDate,
       arrivalTime: report.arrivalTime,
       startTime: report.startTime,
       endTime: report.endTime,
@@ -1718,6 +3256,7 @@ export class QuoteService {
   async markArrived(
     quoteId: string,
     requester: { userId: string; role: string },
+    occurrenceDate?: string,
   ): Promise<QuoteResponse> {
     const quote = await this.quoteRepository.findById(quoteId);
 
@@ -1725,17 +3264,7 @@ export class QuoteService {
       throw new NotFoundException("Quote not found");
     }
 
-    if (quote.serviceType !== QUOTE.SERVICE_TYPES.RESIDENTIAL) {
-      throw new BadRequestException(
-        "Arrival updates are only supported for residential quotes",
-      );
-    }
-
     const requesterId = requester.userId?.toString();
-    const isClient =
-      requester.role === ROLES.CLIENT &&
-      quote.userId &&
-      quote.userId.toString() === requesterId;
     const isAssignedCleaner =
       requester.role === ROLES.CLEANER &&
       requesterId &&
@@ -1745,30 +3274,65 @@ export class QuoteService {
           .map((id) => id.toString())
           .includes(requesterId));
 
-    if (!isClient && !isAssignedCleaner) {
-      throw new ForbiddenException("User is not allowed to update this quote");
+    if (!isAssignedCleaner) {
+      throw new ForbiddenException(
+        "Only an assigned cleaner can mark arrival for this quote",
+      );
     }
 
-    const currentStatus =
-      quote.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING;
+    const isManualService = this.isManualServiceType(
+      quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL,
+    );
+    if (isManualService && !occurrenceDate) {
+      throw new BadRequestException(
+        "Occurrence date is required to mark arrival for this booking",
+      );
+    }
 
-    if (currentStatus === QUOTE.CLEANING_STATUSES.COMPLETED) {
-      throw new BadRequestException("Cleaning is already completed");
+    const cleanerProgress = this.resolveCleanerProgressForCleaner(quote, requesterId);
+    const activeOccurrence = isManualService
+      ? this.resolveOccurrenceProgressForCleanerAndDate(
+          quote,
+          requesterId,
+          occurrenceDate,
+        )
+      : undefined;
+    const currentStatus =
+      activeOccurrence?.cleaningStatus ||
+      cleanerProgress?.cleaningStatus ||
+      quote.cleaningStatus ||
+      QUOTE.CLEANING_STATUSES.PENDING;
+
+    if (
+      activeOccurrence?.reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
+      cleanerProgress?.reportStatus === QUOTE.REPORT_STATUSES.APPROVED ||
+      currentStatus === QUOTE.CLEANING_STATUSES.COMPLETED
+    ) {
+      throw new BadRequestException("This cleaner has already completed the job");
     }
 
     if (currentStatus === QUOTE.CLEANING_STATUSES.IN_PROGRESS) {
-      return this.toResponse(quote);
+      return this.toCleanerFacingResponse(quote, requesterId, occurrenceDate);
     }
 
-    const updated = await this.quoteRepository.updateById(quoteId, {
-      cleaningStatus: QUOTE.CLEANING_STATUSES.IN_PROGRESS,
-    });
+    const updatePayload =
+      quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? this.buildResidentialArrivalUpdate(quote, requesterId!, new Date())
+        : this.buildManualOccurrenceArrivalUpdate(
+            quote,
+            requesterId!,
+            occurrenceDate!,
+            new Date(),
+          );
+    const updated = await this.quoteRepository.updateById(quoteId, updatePayload);
 
     if (!updated) {
       throw new NotFoundException("Quote not found");
     }
 
-    return this.toResponse(updated);
+    return requesterId
+      ? this.toCleanerFacingResponse(updated, requesterId, occurrenceDate)
+      : this.toResponse(updated);
   }
 
   private async resolveContact(
@@ -2235,6 +3799,10 @@ export class QuoteService {
       return {
         frequency: "monthly",
         pattern_type: "specific_dates",
+        year:
+          typeof schedule.year === "number" && Number.isInteger(schedule.year)
+            ? schedule.year
+            : undefined,
         months,
         month_dates,
         dates,
@@ -2260,6 +3828,10 @@ export class QuoteService {
     return {
       frequency: "monthly",
       pattern_type: "weekday_pattern",
+      year:
+        typeof schedule.year === "number" && Number.isInteger(schedule.year)
+          ? schedule.year
+          : undefined,
       months,
       week,
       day,
@@ -2389,10 +3961,20 @@ export class QuoteService {
   ): string | null {
     const [hours, minutes] = schedule.start_time.split(":").map(Number);
     const monthDatesMap = this.resolveMonthlyDatesMap(schedule);
+    const scheduleYear =
+      typeof schedule.year === "number" ? schedule.year : undefined;
 
     for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
       const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
       const year = monthRef.getFullYear();
+      if (scheduleYear !== undefined) {
+        if (year < scheduleYear) {
+          continue;
+        }
+        if (year > scheduleYear) {
+          break;
+        }
+      }
       const month = monthRef.getMonth();
       const monthValue = month + 1;
       const selectedDates = monthDatesMap.get(monthValue) || [];
@@ -2424,10 +4006,20 @@ export class QuoteService {
   ): string | null {
     const [hours, minutes] = schedule.start_time.split(":").map(Number);
     const monthSet = new Set(this.normalizeScheduleMonths(schedule.months));
+    const scheduleYear =
+      typeof schedule.year === "number" ? schedule.year : undefined;
 
     for (let monthOffset = 0; monthOffset <= 36; monthOffset += 1) {
       const monthRef = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
       const year = monthRef.getFullYear();
+      if (scheduleYear !== undefined) {
+        if (year < scheduleYear) {
+          continue;
+        }
+        if (year > scheduleYear) {
+          break;
+        }
+      }
       const month = monthRef.getMonth();
       const monthValue = month + 1;
       if (!monthSet.has(monthValue)) {
@@ -2550,6 +4142,21 @@ export class QuoteService {
     }
 
     return parsed;
+  }
+
+  private parseDateOnly(value: string, fieldName: string): Date {
+    this.ensureDateString(value, fieldName);
+    return this.parseDateString(value);
+  }
+
+  private startOfDay(value: Date): Date {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  private addDays(value: Date, days: number): Date {
+    const next = new Date(value);
+    next.setDate(next.getDate() + days);
+    return this.startOfDay(next);
   }
 
   private timeToMinutes(value: string): number {
@@ -2689,55 +4296,110 @@ export class QuoteService {
   }
 
   toResponse(quote: IQuote): QuoteResponse {
-    const derived = this.deriveStatuses(quote);
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
+    const isManualService = this.isManualServiceType(serviceType);
+    const cleanerProgressEntries = this.getNormalizedCleanerProgress(quote);
+    const occurrenceProgressEntries = isManualService
+      ? this.getCleanerOccurrenceProgress(quote)
+      : [];
+    const residentialAggregate =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL &&
+      cleanerProgressEntries.length
+        ? this.buildResidentialAggregateUpdateFromProgress(
+            quote,
+            cleanerProgressEntries,
+          )
+        : undefined;
+    const manualAggregate =
+      isManualService && occurrenceProgressEntries.length
+        ? this.buildManualAggregateUpdateFromOccurrenceProgress(
+            quote,
+            occurrenceProgressEntries,
+          )
+        : undefined;
+    const cleanerProgress = cleanerProgressEntries.length
+      ? cleanerProgressEntries.map((entry) =>
+          this.toCleanerProgressResponse(quote, entry),
+        )
+      : undefined;
+    const cleanerProgressSummary = this.buildCleanerProgressSummary(quote);
+    const occurrenceProgress = occurrenceProgressEntries.length
+      ? occurrenceProgressEntries.map((entry) =>
+          this.toOccurrenceProgressResponse(entry),
+        )
+      : undefined;
+    const occurrenceProgressSummary =
+      occurrenceProgressEntries.length > 0
+        ? this.buildOccurrenceProgressSummary(quote)
+        : undefined;
+    const totalOccurrenceAmount = occurrenceProgressEntries.reduce(
+      (sum, entry) => sum + (this.asFiniteNumber(entry.cleanerEarningAmount) || 0),
+      0,
+    );
+    const paidOccurrenceAmount = occurrenceProgressEntries.reduce(
+      (sum, entry) =>
+        entry.paymentStatus === "paid"
+          ? sum + (this.asFiniteNumber(entry.cleanerEarningAmount) || 0)
+          : sum,
+      0,
+    );
+    const aggregate = residentialAggregate || manualAggregate;
     const status =
+      aggregate?.status ||
       quote.status ||
       (quote.paymentStatus === "paid" ? QUOTE.STATUSES.PAID : undefined);
-    const paymentStatus = this.isManualServiceType(serviceType)
+    const derived = this.deriveStatuses(quote);
+    const paymentStatus = isManualService
       ? quote.paymentStatus === "paid"
         ? "paid"
         : "manual"
       : quote.paymentStatus;
     const cleaningStatus =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? quote.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING
-        : undefined;
+      (aggregate?.cleaningStatus as any) ||
+      quote.cleaningStatus ||
+      (serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL ||
+      occurrenceProgressEntries.length > 0
+        ? QUOTE.CLEANING_STATUSES.PENDING
+        : undefined);
     const reportStatus =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? quote.reportStatus
-        : undefined;
+      (aggregate?.reportStatus as any) || quote.reportStatus;
     const reportSubmittedBy =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? quote.reportSubmittedBy?.toString()
-        : undefined;
+      (((aggregate?.reportSubmittedBy as any) || quote.reportSubmittedBy)?.toString());
     const reportSubmittedAt =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? quote.reportSubmittedAt
-        : undefined;
+      aggregate?.reportSubmittedAt || quote.reportSubmittedAt;
     const cleanerSharePercentage =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? (quote.cleanerSharePercentage ?? quote.cleanerPercentage)
-        : undefined;
+      quote.cleanerSharePercentage ??
+      (isManualService &&
+      this.resolveQuoteTotal(quote) > 0 &&
+      this.resolveManualCleanerPoolAmount(quote) > 0
+        ? Number(
+            (
+              (this.resolveManualCleanerPoolAmount(quote) /
+                this.resolveQuoteTotal(quote)) *
+              100
+            ).toFixed(4),
+          )
+        : serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+          ? quote.cleanerPercentage
+          : undefined);
     const cleanerPercentage =
-      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
-        ? (quote.cleanerPercentage ??
-          (cleanerSharePercentage !== undefined &&
-          cleanerSharePercentage !== null
-            ? Number(
-                (
-                  cleanerSharePercentage /
-                  Math.max(
-                    quote.assignedCleanerIds?.length ||
-                      0 ||
-                      (quote.assignedCleanerId ? 1 : 0),
-                    1,
-                  )
-                ).toFixed(4),
-              )
-            : undefined))
-        : undefined;
-    const cleanerEarningAmount = quote.cleanerEarningAmount;
+      quote.cleanerPercentage ??
+      (cleanerSharePercentage !== undefined &&
+      cleanerSharePercentage !== null
+        ? Number(
+            (
+              cleanerSharePercentage /
+              Math.max(this.resolveAssignedCleanerCount(quote), 1)
+            ).toFixed(4),
+          )
+        : undefined);
+    const cleanerEarningAmount =
+      isManualService
+        ? this.resolveManualCleanerPoolAmount(quote)
+        : quote.cleanerEarningAmount ??
+          (cleanerProgress?.length
+            ? cleanerProgress[0].cleanerEarningAmount
+            : undefined);
 
     return {
       _id: quote._id.toString(),
@@ -2778,6 +4440,17 @@ export class QuoteService {
       cleanerSharePercentage,
       cleanerPercentage,
       cleanerEarningAmount,
+      cleanerPaidAmount: isManualService
+        ? Number(paidOccurrenceAmount.toFixed(2))
+        : undefined,
+      cleanerPendingAmount: isManualService
+        ? Number(Math.max(totalOccurrenceAmount - paidOccurrenceAmount, 0).toFixed(2))
+        : undefined,
+      occurrenceCount: occurrenceProgressSummary?.totalOccurrences,
+      cleanerProgress,
+      cleanerProgressSummary,
+      occurrenceProgress,
+      occurrenceProgressSummary,
       cleaningFrequency: quote.cleaningFrequency,
       cleaningSchedule: quote.cleaningSchedule,
       squareFoot: quote.squareFoot,
@@ -2842,7 +4515,12 @@ export class QuoteService {
   } {
     const serviceType = quote.serviceType || QUOTE.SERVICE_TYPES.RESIDENTIAL;
     const isManualService = this.isManualServiceType(serviceType);
+    const cleanerSummary = this.buildCleanerProgressSummary(quote);
+    const occurrenceSummary = isManualService
+      ? this.buildOccurrenceProgressSummary(quote)
+      : undefined;
     const hasCleaner =
+      (cleanerSummary?.totalAssigned || 0) > 0 ||
       Boolean(quote.assignedCleanerId) ||
       Boolean(quote.assignedCleanerIds && quote.assignedCleanerIds.length);
     const cleaning = quote.cleaningStatus;
@@ -2852,9 +4530,77 @@ export class QuoteService {
       QUOTE.STATUSES.REVIEWED,
     ]);
     const isClosed = quote.status === QUOTE.STATUSES.CLOSED;
+    const residentialCompleted =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL &&
+      Boolean(
+        cleanerSummary &&
+          cleanerSummary.totalAssigned > 0 &&
+          cleanerSummary.completed === cleanerSummary.totalAssigned,
+      );
+    const manualCompleted =
+      isManualService &&
+      Boolean(
+        occurrenceSummary &&
+          occurrenceSummary.totalAssignments > 0 &&
+          occurrenceSummary.completed === occurrenceSummary.totalAssignments,
+      );
     const isCompleted =
+      manualCompleted ||
+      residentialCompleted ||
       report === QUOTE.REPORT_STATUSES.APPROVED ||
       (quote.status ? completedStatuses.has(quote.status) : false);
+
+    const progressSummary =
+      serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? cleanerSummary
+        : occurrenceSummary;
+    const hasRichProgress = Boolean(
+      (serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL &&
+        cleanerSummary &&
+        cleanerSummary.totalAssigned > 0) ||
+        (isManualService &&
+          occurrenceSummary &&
+          occurrenceSummary.totalAssignments > 0),
+    );
+
+    if (hasRichProgress && progressSummary) {
+      const hasSubmitted =
+        progressSummary.reportSubmitted > 0 || progressSummary.completed > 0;
+      const allSubmittedOrCompleted =
+        progressSummary.pending === 0 && progressSummary.inProgress === 0;
+
+      const clientStatus = (() => {
+        if (isClosed) return isManualService ? "completed" : "closed";
+        if (isCompleted) return "completed";
+        if (progressSummary.inProgress > 0) return "ongoing";
+        if (hasSubmitted && allSubmittedOrCompleted) return "report_submitted";
+        if (hasSubmitted) return "ongoing";
+        if (hasCleaner) return "assigned";
+        return "booked";
+      })();
+
+      const cleanerStatus = (() => {
+        if (isClosed) return isManualService ? "completed" : "closed";
+        if (isCompleted) return "completed";
+        if (hasSubmitted && allSubmittedOrCompleted) {
+          return "waiting-for-admin-approval";
+        }
+        if (progressSummary.inProgress > 0 || hasSubmitted) return "ongoing";
+        if (hasCleaner) return "pending";
+        return "pending";
+      })();
+
+      const adminStatus = (() => {
+        if (isClosed) return "closed";
+        if (isCompleted) return "completed";
+        if (progressSummary.inProgress > 0) return "on_site";
+        if (hasSubmitted) return "report_submitted";
+        if (hasCleaner) return "assigned";
+        return "pending";
+      })();
+
+      return { clientStatus, cleanerStatus, adminStatus };
+    }
 
     // Client view
     const clientStatus = (() => {

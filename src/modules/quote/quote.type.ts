@@ -1,4 +1,5 @@
 import type {
+  QuoteCleanerPaymentStatus,
   QuoteCleaningStatus,
   QuoteReportStatus,
   QuoteServiceType,
@@ -17,6 +18,64 @@ export type QuoteServiceItem = {
   unitPrice: number;
   quantity: number;
   subtotal: number;
+};
+
+export type QuoteCleanerProgressResponse = {
+  cleanerId: string;
+  cleaningStatus?: QuoteCleaningStatus;
+  reportStatus?: QuoteReportStatus;
+  cleanerStatus: string;
+  reportId?: string;
+  reportSubmittedAt?: Date;
+  reportApprovedAt?: Date;
+  arrivalMarkedAt?: Date;
+  paymentStatus?: QuoteCleanerPaymentStatus;
+  paidAt?: Date;
+  cleanerPercentage?: number;
+  cleanerEarningAmount?: number;
+  occurrenceCount?: number;
+  approvedOccurrenceCount?: number;
+  pendingOccurrenceCount?: number;
+  inProgressOccurrenceCount?: number;
+  paidAmount?: number;
+  pendingAmount?: number;
+};
+
+export type QuoteCleanerProgressSummary = {
+  totalAssigned: number;
+  pending: number;
+  inProgress: number;
+  reportSubmitted: number;
+  completed: number;
+  paid: number;
+  unpaid: number;
+};
+
+export type QuoteCleanerOccurrenceProgressResponse = {
+  cleanerId: string;
+  occurrenceDate: string;
+  cleaningStatus?: QuoteCleaningStatus;
+  reportStatus?: QuoteReportStatus;
+  cleanerStatus: string;
+  reportId?: string;
+  reportSubmittedAt?: Date;
+  reportApprovedAt?: Date;
+  arrivalMarkedAt?: Date;
+  paymentStatus?: QuoteCleanerPaymentStatus;
+  paidAt?: Date;
+  cleanerPercentage?: number;
+  cleanerEarningAmount?: number;
+};
+
+export type QuoteOccurrenceProgressSummary = {
+  totalAssignments: number;
+  pending: number;
+  inProgress: number;
+  reportSubmitted: number;
+  completed: number;
+  paid: number;
+  unpaid: number;
+  totalOccurrences: number;
 };
 
 export type QuoteCreatePayload = {
@@ -96,6 +155,7 @@ export type QuoteResponse = {
     fullName?: string;
     email?: string;
     phone?: string;
+    cleanerProgress?: QuoteCleanerProgressResponse;
   }>;
   assignedCleanerAt?: Date;
   cleaningStatus?: QuoteCleaningStatus;
@@ -105,6 +165,15 @@ export type QuoteResponse = {
   cleanerSharePercentage?: number;
   cleanerPercentage?: number;
   cleanerEarningAmount?: number;
+  cleanerPaidAmount?: number;
+  cleanerPendingAmount?: number;
+  occurrenceCount?: number;
+  cleanerProgress?: QuoteCleanerProgressResponse[];
+  cleanerProgressSummary?: QuoteCleanerProgressSummary;
+  activeCleanerProgress?: QuoteCleanerProgressResponse;
+  occurrenceProgress?: QuoteCleanerOccurrenceProgressResponse[];
+  occurrenceProgressSummary?: QuoteOccurrenceProgressSummary;
+  activeOccurrenceProgress?: QuoteCleanerOccurrenceProgressResponse;
   squareFoot?: number;
   cleaningFrequency?: string;
   cleaningSchedule?: QuoteCleaningSchedule;
@@ -140,6 +209,7 @@ export type QuotePaymentStatusResponse = {
 };
 
 export type QuoteCleaningReportSummary = {
+  occurrenceDate?: string;
   arrivalTime: Date;
   startTime: Date;
   endTime: Date;

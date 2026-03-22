@@ -168,6 +168,7 @@ const monthlySpecificDatesCleaningScheduleSchema = z
   .object({
     frequency: z.literal("monthly"),
     pattern_type: z.literal("specific_dates"),
+    year: z.coerce.number().int().min(2000).max(3000).optional(),
     months: scheduleMonthsSchema,
     dates: z
       .array(z.coerce.number().int().min(1).max(31))
@@ -250,6 +251,7 @@ const monthlyWeekdayPatternCleaningScheduleSchema = z
   .object({
     frequency: z.literal("monthly"),
     pattern_type: z.literal("weekday_pattern"),
+    year: z.coerce.number().int().min(2000).max(3000).optional(),
     months: scheduleMonthsSchema,
     week: scheduleMonthWeekOptions,
     day: scheduleWeekdayOptions,
@@ -480,6 +482,9 @@ export const confirmQuotePaymentSchema = z.object({
 export const quoteDetailSchema = z.object({
   params: z.object({
     quoteId: z.string().min(1),
+  }),
+  query: z.object({
+    occurrenceDate: dateStringSchema.optional(),
   }),
 });
 

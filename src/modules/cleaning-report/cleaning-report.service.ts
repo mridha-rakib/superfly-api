@@ -21,7 +21,6 @@ import {
   type QuoteScheduleWeekday,
 } from "../quote/quote-schedule.type";
 import { QuoteService } from "../quote/quote.service";
-import { UserService } from "../user/user.service";
 import type { IUser } from "../user/user.interface";
 import type { ICleaningReport } from "./cleaning-report.interface";
 import { CleaningReportRepository } from "./cleaning-report.repository";
@@ -71,14 +70,12 @@ export class CleaningReportService {
   private quoteRepository: QuoteRepository;
   private quoteService: QuoteService;
   private storageService: S3Service;
-  private userService: UserService;
 
   constructor() {
     this.reportRepository = new CleaningReportRepository();
     this.quoteRepository = new QuoteRepository();
     this.quoteService = new QuoteService();
     this.storageService = new S3Service();
-    this.userService = new UserService();
   }
 
   async createReport(
@@ -111,7 +108,8 @@ export class CleaningReportService {
     );
     const existing = await this.reportRepository.findByQuoteAndOccurrence(
       quoteId,
-      occurrenceDate
+      occurrenceDate,
+      cleanerId,
     );
     if (existing) {
       throw new ConflictException(
@@ -167,19 +165,23 @@ export class CleaningReportService {
       status: QUOTE.REPORT_STATUSES.PENDING,
     });
 
-    if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
-      const updatePayload: Partial<IQuote> = {
-        reportStatus: QUOTE.REPORT_STATUSES.PENDING,
-        reportSubmittedBy: cleanerId,
-        reportSubmittedAt: submissionTime,
-      };
+    const updatePayload =
+      quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? this.quoteService.buildResidentialReportSubmissionUpdate(
+            quote,
+            cleanerId,
+            report._id.toString(),
+            submissionTime,
+          )
+        : this.quoteService.buildManualReportSubmissionUpdate(
+            quote,
+            cleanerId,
+            occurrenceDate,
+            report._id.toString(),
+            submissionTime,
+          );
 
-      if (quote.cleaningStatus !== QUOTE.CLEANING_STATUSES.COMPLETED) {
-        updatePayload.cleaningStatus = QUOTE.CLEANING_STATUSES.COMPLETED;
-      }
-
-      await this.quoteRepository.updateById(quoteId, updatePayload);
-    }
+    await this.quoteRepository.updateById(quoteId, updatePayload);
 
     realtimeService.emitReportSubmitted({
       quoteId: quote._id.toString(),
@@ -267,49 +269,42 @@ export class CleaningReportService {
       throw new NotFoundException("Quote not found");
     }
 
-    let completedQuote: IQuote | null = null;
+    let updatedQuote: IQuote | null = null;
 
-    if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
-      const {
-        sharePercentage,
-        perCleanerPercentage,
-        cleanerCount,
-      } = await this.resolveCleanerSplit(quote);
-      const totalAmount = this.resolveQuoteTotal(quote);
-      const cleanerEarningAmount =
-        totalAmount > 0
-          ? Number(
-              (
-                (totalAmount * sharePercentage) /
-                (100 * Math.max(cleanerCount, 1))
-              ).toFixed(2)
-            )
-          : 0;
+    const approvedAt = new Date();
+    const updatePayload =
+      quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL
+        ? this.quoteService.buildResidentialReportApprovalUpdate(
+            quote,
+            report.cleanerId.toString(),
+            report._id.toString(),
+            approvedAt,
+          )
+        : this.quoteService.buildManualReportApprovalUpdate(
+            quote,
+            report.cleanerId.toString(),
+            report.occurrenceDate,
+            report._id.toString(),
+            approvedAt,
+          );
 
-      completedQuote = await this.quoteRepository.updateById(
-        quote._id.toString(),
-        {
-          reportStatus: QUOTE.REPORT_STATUSES.APPROVED,
-          cleaningStatus: QUOTE.CLEANING_STATUSES.COMPLETED,
-          status: QUOTE.STATUSES.COMPLETED,
-          paymentStatus: quote.paymentStatus || "paid",
-          paidAt: quote.paidAt || new Date(),
-          cleanerSharePercentage: sharePercentage,
-          cleanerPercentage: perCleanerPercentage,
-          cleanerEarningAmount,
-        },
-      );
-    }
+    updatedQuote = await this.quoteRepository.updateById(
+      quote._id.toString(),
+      updatePayload,
+    );
 
-    if (completedQuote) {
+    if (
+      updatedQuote &&
+      updatedQuote.status === QUOTE.STATUSES.COMPLETED
+    ) {
       try {
-        await this.quoteService.notifyAdminBookingCompleted(completedQuote, {
+        await this.quoteService.notifyAdminBookingCompleted(updatedQuote, {
           eventKey: "report_approved",
           status: QUOTE.STATUSES.COMPLETED,
         });
       } catch (error) {
         logger.warn(
-          { quoteId: completedQuote._id.toString(), reportId, error },
+          { quoteId: updatedQuote._id.toString(), reportId, error },
           "Admin booking-completed notification failed",
         );
       }
@@ -376,9 +371,10 @@ export class CleaningReportService {
     quote: IQuote,
     rawOccurrenceDate?: string
   ): string {
-    const quoteServiceDate = this.toDateString(
-      this.parseDateOnly(quote.serviceDate, "Quote service date")
-    );
+    const allowedDates = this.quoteService.getOccurrenceDatesForQuote(quote);
+    const quoteServiceDate =
+      allowedDates[0] ||
+      this.toDateString(this.parseDateOnly(quote.serviceDate, "Quote service date"));
 
     if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
       if (rawOccurrenceDate?.trim()) {
@@ -404,7 +400,7 @@ export class CleaningReportService {
       this.parseDateOnly(rawOccurrenceDate, "Occurrence date")
     );
 
-    if (!this.isOccurrenceAllowedForQuote(quote, occurrenceDate)) {
+    if (!allowedDates.includes(occurrenceDate)) {
       throw new BadRequestException(
         "Occurrence date is not part of this booking schedule"
       );
@@ -754,58 +750,4 @@ export class CleaningReportService {
     return String(value);
   }
 
-  private async resolveCleanerSplit(
-    quote: IQuote
-  ): Promise<{
-    sharePercentage: number;
-    perCleanerPercentage: number;
-    cleanerCount: number;
-  }> {
-    const assigned = [
-      quote.assignedCleanerId,
-      ...(quote.assignedCleanerIds || []),
-    ]
-      .map((id) => (id ? id.toString() : undefined))
-      .filter(Boolean) as string[];
-
-    const uniqueAssigned = Array.from(new Set(assigned));
-    const cleanerCount = uniqueAssigned.length || 1;
-
-    // Prefer explicit quote-level share; fallback to primary cleaner's configured percentage.
-    const primaryId = uniqueAssigned[0];
-    const cleaner = primaryId
-      ? await this.userService.getById(primaryId.toString())
-      : null;
-
-    const sharePercentage =
-      quote.cleanerSharePercentage ??
-      quote.cleanerPercentage ??
-      cleaner?.cleanerPercentage ??
-      0;
-
-    const normalizedShare = Number.isFinite(sharePercentage)
-      ? Number(sharePercentage)
-      : 0;
-
-    const perCleanerPercentage =
-      cleanerCount > 0
-        ? Number((normalizedShare / cleanerCount).toFixed(4))
-        : normalizedShare;
-
-    return {
-      sharePercentage: normalizedShare,
-      perCleanerPercentage,
-      cleanerCount,
-    };
-  }
-
-  private resolveQuoteTotal(quote: IQuote): number {
-    if (quote.totalPrice && quote.totalPrice > 0) {
-      return quote.totalPrice;
-    }
-    if (quote.paymentAmount && quote.paymentAmount > 0) {
-      return Number((quote.paymentAmount / 100).toFixed(2));
-    }
-    return 0;
-  }
 }

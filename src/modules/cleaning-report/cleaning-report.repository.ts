@@ -12,11 +12,26 @@ export class CleaningReportRepository extends BaseRepository<ICleaningReport> {
     return this.model.findOne({ quoteId }).sort({ createdAt: -1 }).exec();
   }
 
+  async findByQuoteIdAndCleanerId(
+    quoteId: string,
+    cleanerId: string,
+  ): Promise<ICleaningReport | null> {
+    return this.model
+      .findOne({ quoteId, cleanerId })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
   async findByQuoteAndOccurrence(
     quoteId: string,
-    occurrenceDate: string
+    occurrenceDate: string,
+    cleanerId?: string,
   ): Promise<ICleaningReport | null> {
-    return this.model.findOne({ quoteId, occurrenceDate }).exec();
+    const filter: FilterQuery<ICleaningReport> = { quoteId, occurrenceDate };
+    if (cleanerId) {
+      filter.cleanerId = cleanerId as any;
+    }
+    return this.model.findOne(filter).exec();
   }
 
   async findByIdWithDetails(

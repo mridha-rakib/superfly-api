@@ -9,6 +9,7 @@ const envSchema = z.object({
   BASE_URL: z.string().default("/api/v1"),
   PORT: z.coerce.number().default(3000),
   MONGO_URI: z.url().nonempty("MONGO_URI is required"),
+  MONGO_DNS_SERVERS: z.string().optional(),
   JWT_SECRET: z.string().default("lp01yPo31ACozd4pDI9Z1DSD30A"),
   JWT_REFRESH_SECRET: z.string().default("rwN17KgtvujqVe6jANmu3r5FIFY0jw"),
   JWT_EXPIRY: z.string().default("7d"),

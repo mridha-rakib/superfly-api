@@ -48,6 +48,7 @@ export type QuoteCleaningScheduleWeekly = {
 export type QuoteCleaningScheduleMonthlySpecificDates = {
   frequency: "monthly";
   pattern_type: "specific_dates";
+  year?: number;
   months?: QuoteScheduleMonth[];
   dates?: number[];
   month_dates?: QuoteScheduleMonthDates[];
@@ -58,6 +59,7 @@ export type QuoteCleaningScheduleMonthlySpecificDates = {
 export type QuoteCleaningScheduleMonthlyWeekdayPattern = {
   frequency: "monthly";
   pattern_type: "weekday_pattern";
+  year?: number;
   months?: QuoteScheduleMonth[];
   week: QuoteScheduleMonthWeek;
   day: QuoteScheduleWeekday;

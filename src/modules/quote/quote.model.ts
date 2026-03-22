@@ -177,6 +177,110 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
     type: Number,
     min: 0,
   },
+  cleanerProgress: [
+    {
+      cleanerId: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        required: true,
+        index: true,
+      },
+      cleaningStatus: {
+        type: String,
+        enum: Object.values(QUOTE.CLEANING_STATUSES),
+        default: QUOTE.CLEANING_STATUSES.PENDING,
+      },
+      reportStatus: {
+        type: String,
+        enum: Object.values(QUOTE.REPORT_STATUSES),
+      },
+      reportId: {
+        type: Schema.Types.ObjectId,
+        ref: "CleaningReport",
+      },
+      reportSubmittedAt: {
+        type: Date,
+      },
+      reportApprovedAt: {
+        type: Date,
+      },
+      arrivalMarkedAt: {
+        type: Date,
+      },
+      paymentStatus: {
+        type: String,
+        enum: ["pending", "paid"],
+        default: "pending",
+      },
+      paidAt: {
+        type: Date,
+      },
+      cleanerPercentage: {
+        type: Number,
+        min: 0,
+        max: 100,
+      },
+      cleanerEarningAmount: {
+        type: Number,
+        min: 0,
+      },
+    },
+  ],
+  cleanerOccurrenceProgress: [
+    {
+      cleanerId: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        required: true,
+        index: true,
+      },
+      occurrenceDate: {
+        type: String,
+        required: true,
+        trim: true,
+        index: true,
+      },
+      cleaningStatus: {
+        type: String,
+        enum: Object.values(QUOTE.CLEANING_STATUSES),
+        default: QUOTE.CLEANING_STATUSES.PENDING,
+      },
+      reportStatus: {
+        type: String,
+        enum: Object.values(QUOTE.REPORT_STATUSES),
+      },
+      reportId: {
+        type: Schema.Types.ObjectId,
+        ref: "CleaningReport",
+      },
+      reportSubmittedAt: {
+        type: Date,
+      },
+      reportApprovedAt: {
+        type: Date,
+      },
+      arrivalMarkedAt: {
+        type: Date,
+      },
+      paymentStatus: {
+        type: String,
+        enum: ["pending", "paid"],
+        default: "pending",
+      },
+      paidAt: {
+        type: Date,
+      },
+      cleanerPercentage: {
+        type: Number,
+        min: 0,
+        max: 100,
+      },
+      cleanerEarningAmount: {
+        type: Number,
+        min: 0,
+      },
+    },
+  ],
 });
 
 quoteSchema.index({ userId: 1, createdAt: -1 });

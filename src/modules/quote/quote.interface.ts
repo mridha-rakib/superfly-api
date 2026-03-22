@@ -21,6 +21,7 @@ export type QuoteCleaningStatus =
   | "completed";
 
 export type QuoteReportStatus = "pending" | "approved";
+export type QuoteCleanerPaymentStatus = "pending" | "paid";
 
 export interface IQuoteServiceItem {
   key: string;
@@ -28,6 +29,35 @@ export interface IQuoteServiceItem {
   unitPrice: number;
   quantity: number;
   subtotal: number;
+}
+
+export interface IQuoteCleanerProgress {
+  cleanerId: Types.ObjectId | string;
+  cleaningStatus?: QuoteCleaningStatus;
+  reportStatus?: QuoteReportStatus;
+  reportId?: Types.ObjectId | string;
+  reportSubmittedAt?: Date;
+  reportApprovedAt?: Date;
+  arrivalMarkedAt?: Date;
+  paymentStatus?: QuoteCleanerPaymentStatus;
+  paidAt?: Date;
+  cleanerPercentage?: number;
+  cleanerEarningAmount?: number;
+}
+
+export interface IQuoteCleanerOccurrenceProgress {
+  cleanerId: Types.ObjectId | string;
+  occurrenceDate: string;
+  cleaningStatus?: QuoteCleaningStatus;
+  reportStatus?: QuoteReportStatus;
+  reportId?: Types.ObjectId | string;
+  reportSubmittedAt?: Date;
+  reportApprovedAt?: Date;
+  arrivalMarkedAt?: Date;
+  paymentStatus?: QuoteCleanerPaymentStatus;
+  paidAt?: Date;
+  cleanerPercentage?: number;
+  cleanerEarningAmount?: number;
 }
 
 export interface IQuote extends Document {
@@ -74,6 +104,8 @@ export interface IQuote extends Document {
   cleanerSharePercentage?: number;
   cleanerPercentage?: number;
   cleanerEarningAmount?: number;
+  cleanerProgress?: IQuoteCleanerProgress[];
+  cleanerOccurrenceProgress?: IQuoteCleanerOccurrenceProgress[];
   isDeleted?: boolean;
   deletedAt?: Date;
   createdAt: Date;
