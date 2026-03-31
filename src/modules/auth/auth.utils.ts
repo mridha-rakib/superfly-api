@@ -1,18 +1,22 @@
 // file: src/modules/auth/auth.utils.ts
-import { AUTH, OTP } from "@/constants/app.constants";
+import { AUTH, MESSAGES, OTP } from "@/constants/app.constants";
+import { ErrorCodeEnum } from "@/enums/error-code.enum";
 import { env } from "@/env";
+import { UnauthorizedException } from "@/utils/app-error.utils";
 import crypto from "crypto";
+import type { Secret, SignOptions } from "jsonwebtoken";
 import jwt from "jsonwebtoken";
 import type { JWTPayload } from "../user/user.type";
-import type { SignOptions, Secret } from "jsonwebtoken";
-
-
 
 export class AuthUtil {
   static generateAccessToken(payload: JWTPayload): string {
-    return jwt.sign(payload, env.JWT_SECRET as Secret, {
-      expiresIn: env.JWT_EXPIRY || AUTH.ACCESS_TOKEN_EXPIRY,
-    } as SignOptions);
+    return jwt.sign(
+      payload,
+      env.JWT_SECRET as Secret,
+      {
+        expiresIn: env.JWT_EXPIRY || AUTH.ACCESS_TOKEN_EXPIRY,
+      } as SignOptions,
+    );
   }
 
   /**
@@ -20,9 +24,13 @@ export class AuthUtil {
 Generate Refresh Token
 */
   static generateRefreshToken(userId: string): string {
-    return jwt.sign({ userId }, env.JWT_REFRESH_SECRET as Secret, {
-      expiresIn: env.JWT_REFRESH_EXPIRY || AUTH.REFRESH_TOKEN_EXPIRY,
-    } as SignOptions);
+    return jwt.sign(
+      { userId },
+      env.JWT_REFRESH_SECRET as Secret,
+      {
+        expiresIn: env.JWT_REFRESH_EXPIRY || AUTH.REFRESH_TOKEN_EXPIRY,
+      } as SignOptions,
+    );
   }
 
   /**
@@ -34,7 +42,10 @@ Verify Access Token
       const decoded = jwt.verify(token, env.JWT_SECRET as Secret);
       return decoded as JWTPayload;
     } catch (error) {
-      throw new Error("Invalid or expired access token");
+      throw new UnauthorizedException(
+        "Invalid or expired access token",
+        ErrorCodeEnum.AUTH_TOKEN_INVALID,
+      );
     }
   }
 
@@ -47,7 +58,10 @@ Verify Refresh Token
       const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET as Secret);
       return decoded as JWTPayload;
     } catch (error) {
-      throw new Error("Invalid or expired refresh token");
+      throw new UnauthorizedException(
+        MESSAGES.AUTH.REFRESH_TOKEN_INVALID,
+        ErrorCodeEnum.AUTH_TOKEN_INVALID,
+      );
     }
   }
 
@@ -77,7 +91,6 @@ Generate OTP (4 digits)
     return Math.floor(Math.random() * (max - min + 1) + min).toString();
   }
 
-
   static getTokenExpirationTime(expiryString: string): Date {
     const expiryDate = new Date();
     const match = expiryString.match(/(\d+)([dhms])/);
@@ -105,28 +118,22 @@ Generate OTP (4 digits)
     return expiryDate;
   }
 
-
   static getOTPExpirationTime(): Date {
     const expiryDate = new Date();
     expiryDate.setMinutes(expiryDate.getMinutes() + OTP.EXPIRY_MINUTES);
     return expiryDate;
   }
 
-
   static isValidEmail(email: string): boolean {
     const emailRegex = /^[^\s@]+@[^\s@]+.[^\s@]+$/;
     return emailRegex.test(email);
   }
 
-
   static generateVerificationLink(baseURL: string, token: string): string {
     return `${baseURL}/api/v1/auth/verify-email?token=${token}`;
   }
 
-
   static generatePasswordResetLink(baseURL: string, token: string): string {
     return `${baseURL}/api/v1/auth/reset-password?token=${token}`;
   }
-
-
 }
