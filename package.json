@@ -15,7 +15,8 @@
     "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsc",
     "lint": "eslint --fix src test",
-    "test": "vitest run",
+    "pretest": "npm run build",
+    "test": "node -r ./tsconfig-paths-bootstrap.js ./test/run-tests.cjs",
     "typecheck": "tsc --noEmit",
     "create:module": "node create-module.js",
     "seed:super-admin": "tsx --env-file=.env src/seeders/super-admin.seeder.ts"

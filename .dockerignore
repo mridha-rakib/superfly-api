@@ -1,6 +1,8 @@
 node_modules
 dist
 coverage
+test
+src/test
 .git
 .gitignore
 .vscode
@@ -10,3 +12,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+bun.lock
+backend-api.zip
+README.md
+LICENSE
+.frontmatter
+frontmatter.json
+frontend

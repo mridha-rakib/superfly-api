@@ -1248,18 +1248,35 @@ export class QuoteService {
 
     if (existingOccurrenceProgress.length) {
       return existingOccurrenceProgress
-        .filter((entry) => entry?.cleanerId && entry?.occurrenceDate)
-        .map((entry) => ({
-          ...entry,
-          occurrenceDate: entry.occurrenceDate.trim(),
-          cleaningStatus:
-            entry.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING,
-          paymentStatus:
-            entry.paymentStatus ||
-            (entry.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
-              ? "paid"
-              : "pending"),
-        }));
+        .map((entry) => {
+          const cleanerId = entry?.cleanerId?.toString?.().trim();
+          const occurrenceDate = entry?.occurrenceDate?.toString?.().trim();
+
+          if (!cleanerId || !occurrenceDate) {
+            return null;
+          }
+
+          return {
+            cleanerId,
+            occurrenceDate,
+            cleaningStatus:
+              entry.cleaningStatus || QUOTE.CLEANING_STATUSES.PENDING,
+            reportStatus: entry.reportStatus,
+            reportId: entry.reportId,
+            reportSubmittedAt: entry.reportSubmittedAt,
+            reportApprovedAt: entry.reportApprovedAt,
+            arrivalMarkedAt: entry.arrivalMarkedAt,
+            paymentStatus:
+              entry.paymentStatus ||
+              (entry.reportStatus === QUOTE.REPORT_STATUSES.APPROVED
+                ? "paid"
+                : "pending"),
+            paidAt: entry.paidAt,
+            cleanerPercentage: this.asFiniteNumber(entry.cleanerPercentage),
+            cleanerEarningAmount: this.asFiniteNumber(entry.cleanerEarningAmount),
+          } as IQuoteCleanerOccurrenceProgress;
+        })
+        .filter((entry): entry is IQuoteCleanerOccurrenceProgress => Boolean(entry));
     }
 
     if (quote.serviceType === QUOTE.SERVICE_TYPES.RESIDENTIAL) {
@@ -1335,10 +1352,16 @@ export class QuoteService {
       cleanerCount,
     );
     const existingMap = new Map(
-      (existingEntries || []).map((entry) => [
-        `${entry.cleanerId.toString()}:${entry.occurrenceDate}`,
-        entry,
-      ]),
+      (existingEntries || []).flatMap((entry) => {
+        const cleanerId = entry?.cleanerId?.toString?.().trim();
+        const occurrenceDate = entry?.occurrenceDate?.toString?.().trim();
+
+        if (!cleanerId || !occurrenceDate) {
+          return [];
+        }
+
+        return [[`${cleanerId}:${occurrenceDate}`, entry] as const];
+      }),
     );
 
     return assignedCleanerIds.flatMap((cleanerId, cleanerIndex) => {
@@ -2071,7 +2094,10 @@ export class QuoteService {
   ): IQuoteCleanerProgress[] {
     const byCleaner = new Map<string, IQuoteCleanerOccurrenceProgress[]>();
     occurrenceProgress.forEach((entry) => {
-      const cleanerId = entry.cleanerId.toString();
+      const cleanerId = entry?.cleanerId?.toString?.().trim();
+      if (!cleanerId) {
+        return;
+      }
       const items = byCleaner.get(cleanerId) || [];
       items.push(entry);
       byCleaner.set(cleanerId, items);

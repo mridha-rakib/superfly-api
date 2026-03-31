@@ -1,0 +1,176 @@
+const assert = require("node:assert/strict");
+
+const requiredEnv = {
+  NODE_ENV: "test",
+  APP_NAME: "SuperFly Test",
+  BASE_URL: "/api/v1",
+  PORT: "3000",
+  MONGO_URI: "https://example.com",
+  CLIENT_URL: "https://superflycleaning.com",
+  JWT_SECRET: "test-access-secret",
+  JWT_REFRESH_SECRET: "test-refresh-secret",
+  JWT_EXPIRY: "7d",
+  JWT_REFRESH_EXPIRY: "30d",
+  SALT_ROUNDS: "12",
+  STRIPE_SECRET_KEY: "sk_test_123",
+  STRIPE_WEBHOOK_SECRET: "whsec_test_123",
+  AWS_ACCESS_KEY: "test-access-key",
+  AWS_SECRET_ACCESS_KEY: "test-secret-key",
+  AWS_REGION: "us-east-1",
+  AWS_S3_BUCKET: "test-bucket",
+};
+
+Object.assign(process.env, requiredEnv);
+
+const { AuthUtil } = require("../dist/modules/auth/auth.utils.js");
+const { buildAllowedOrigins, buildSocketCorsOptions, getPreferredCorsOrigin, resolveCorsOrigin } = require("../dist/config/cors.config.js");
+const { HTTPSTATUS } = require("../dist/config/http.config.js");
+const { ErrorCodeEnum } = require("../dist/enums/error-code.enum.js");
+const { QuoteService } = require("../dist/modules/quote/quote.service.js");
+const { UnauthorizedException } = require("../dist/utils/app-error.utils.js");
+
+const tests = [
+  {
+    name: "rejects invalid access tokens",
+    run() {
+      assert.throws(
+        () => AuthUtil.verifyAccessToken("invalid-token"),
+        (error) => {
+          assert.ok(error instanceof UnauthorizedException);
+          assert.equal(error.statusCode, HTTPSTATUS.UNAUTHORIZED);
+          assert.equal(error.errorCode, ErrorCodeEnum.AUTH_TOKEN_INVALID);
+          assert.equal(error.message, "Invalid or expired access token");
+          return true;
+        },
+      );
+    },
+  },
+  {
+    name: "rejects invalid refresh tokens",
+    run() {
+      assert.throws(
+        () => AuthUtil.verifyRefreshToken("invalid-token"),
+        (error) => {
+          assert.ok(error instanceof UnauthorizedException);
+          assert.equal(error.statusCode, HTTPSTATUS.UNAUTHORIZED);
+          assert.equal(error.errorCode, ErrorCodeEnum.AUTH_TOKEN_INVALID);
+          assert.equal(error.message, "Invalid or expired refresh token.");
+          return true;
+        },
+      );
+    },
+  },
+  {
+    name: "builds the expected shared CORS allowlist",
+    run() {
+      const origins = buildAllowedOrigins({
+        NODE_ENV: "development",
+        CLIENT_URL: "https://superflycleaning.com",
+      });
+
+      assert.ok(origins.includes("https://superflycleaning.com"));
+      assert.ok(origins.includes("https://admin.superflycleaning.com"));
+      assert.ok(origins.includes("https://www.superflycleaning.com"));
+      assert.ok(origins.includes("http://localhost:5173"));
+      assert.ok(origins.includes("http://127.0.0.1:5174"));
+    },
+  },
+  {
+    name: "resolves allowed production origins and rejects unknown ones",
+    run() {
+      const config = {
+        NODE_ENV: "production",
+        CLIENT_URL: "https://superflycleaning.com",
+        ADMIN_URL: "https://admin.superflycleaning.com",
+        ALLOWED_ORIGINS:
+          "https://partner.superflycleaning.com,https://ops.superflycleaning.com",
+      };
+
+      assert.equal(
+        getPreferredCorsOrigin(config),
+        "https://admin.superflycleaning.com",
+      );
+      assert.equal(
+        resolveCorsOrigin("https://admin.superflycleaning.com", config),
+        "https://admin.superflycleaning.com",
+      );
+      assert.equal(
+        resolveCorsOrigin("https://partner.superflycleaning.com", config),
+        "https://partner.superflycleaning.com",
+      );
+      assert.equal(resolveCorsOrigin("https://evil.example.com", config), false);
+
+      const socketOrigins = buildSocketCorsOptions(config).origin;
+      assert.ok(Array.isArray(socketOrigins));
+      assert.ok(socketOrigins.includes("https://superflycleaning.com"));
+      assert.ok(socketOrigins.includes("https://admin.superflycleaning.com"));
+      assert.ok(socketOrigins.includes("https://www.superflycleaning.com"));
+      assert.ok(socketOrigins.includes("https://partner.superflycleaning.com"));
+      assert.ok(socketOrigins.includes("https://ops.superflycleaning.com"));
+    },
+  },
+  {
+    name: "keeps cleaner ids when normalizing occurrence progress entries",
+    run() {
+      const service = Object.create(QuoteService.prototype);
+      const occurrenceEntry = {
+        cleaningStatus: "pending",
+        reportStatus: undefined,
+        paymentStatus: "pending",
+        cleanerPercentage: 25,
+        cleanerEarningAmount: 150,
+      };
+
+      Object.defineProperty(occurrenceEntry, "cleanerId", {
+        value: "69cc531498e8d66773ab2ae5",
+        enumerable: false,
+        configurable: true,
+      });
+      Object.defineProperty(occurrenceEntry, "occurrenceDate", {
+        value: "2026-04-03",
+        enumerable: true,
+        configurable: true,
+      });
+
+      const quote = {
+        serviceType: "post_construction",
+        cleanerOccurrenceProgress: [occurrenceEntry],
+        totalPrice: 600,
+        paymentAmount: 0,
+      };
+
+      const normalized = service.getCleanerOccurrenceProgress(quote);
+      assert.equal(normalized.length, 1);
+      assert.equal(normalized[0].cleanerId, "69cc531498e8d66773ab2ae5");
+
+      const cleanerProgress = service.buildCleanerProgressFromOccurrences(
+        quote,
+        normalized,
+      );
+      assert.equal(cleanerProgress.length, 1);
+      assert.equal(cleanerProgress[0].cleanerId, "69cc531498e8d66773ab2ae5");
+    },
+  },
+];
+
+(async () => {
+  let failed = 0;
+
+  for (const test of tests) {
+    try {
+      await test.run();
+      console.log(`PASS ${test.name}`);
+    } catch (error) {
+      failed += 1;
+      console.error(`FAIL ${test.name}`);
+      console.error(error);
+    }
+  }
+
+  if (failed > 0) {
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Passed ${tests.length} test(s).`);
+})();
