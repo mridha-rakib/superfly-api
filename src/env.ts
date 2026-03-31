@@ -18,6 +18,8 @@ const envSchema = z.object({
 
   // Frontend URL
   CLIENT_URL: z.url().nonempty(),
+  ADMIN_URL: z.url().optional(),
+  ALLOWED_ORIGINS: z.string().optional(),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),

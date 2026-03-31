@@ -14,6 +14,7 @@ import rootRouter from "@/routes/index.route.js";
 
 import swaggerUi from "swagger-ui-express";
 
+import { sharedCorsOptions } from "./config/cors.config.js";
 import { swaggerSpec, swaggerUiOptions } from "./config/swagger.config.js";
 import { env } from "./env.js";
 import { pinoLogger } from "./middlewares/pino-logger.js";
@@ -27,41 +28,43 @@ const app: Application = express();
 //   }),
 // );
 
-const allowedOrigins = new Set([
-  env.CLIENT_URL,
-  "https://superflycleaning.com",
-  "https://www.superflycleaning.com",
-  "https://admin.superflycleaning.com",
-  "http://localhost:5173",
-  "http://localhost:5174/",
-]);
+// const allowedOrigins = new Set([
+//   env.CLIENT_URL,
+//   "https://superflycleaning.com",
+//   "https://www.superflycleaning.com",
+//   "https://admin.superflycleaning.com",
+//   "http://localhost:5173",
+//   "http://localhost:5174/",
+// ]);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
+// app.use(
+//   cors({
+//     origin: (origin, callback) => {
+//       if (!origin) {
+//         callback(null, true);
+//         return;
+//       }
 
-      if (allowedOrigins.has(origin)) {
-        callback(null, true);
-        return;
-      }
+//       if (allowedOrigins.has(origin)) {
+//         callback(null, true);
+//         return;
+//       }
 
-      callback(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "Accept",
-      "Origin",
-    ],
-  }),
-);
+//       callback(new Error(`CORS blocked for origin: ${origin}`));
+//     },
+//     credentials: true,
+//     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+//     allowedHeaders: [
+//       "Content-Type",
+//       "Authorization",
+//       "X-Requested-With",
+//       "Accept",
+//       "Origin",
+//     ],
+//   }),
+// );
+
+app.use(cors(sharedCorsOptions));
 
 app.use(
   `${env.BASE_URL}/billing/webhook`,

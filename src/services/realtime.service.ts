@@ -1,7 +1,7 @@
 // file: src/services/realtime.service.ts
 
+import { socketCorsOptions } from "@/config/cors.config";
 import { logger } from "@/middlewares/pino-logger";
-import { env } from "@/env";
 import { AuthUtil } from "@/modules/auth/auth.utils";
 import type { JWTPayload } from "@/modules/user/user.type";
 import type { Server as HttpServer } from "node:http";
@@ -89,14 +89,9 @@ class RealtimeService {
       return;
     }
 
-    const allowedOrigins = this.parseAllowedOrigins(env.CLIENT_URL);
-
     this.io = new Server(server, {
       path: "/ws",
-      cors: {
-        origin: allowedOrigins.length ? allowedOrigins : true,
-        credentials: true,
-      },
+      cors: socketCorsOptions,
     });
 
     this.io.use((socket, next) => {
@@ -123,13 +118,13 @@ class RealtimeService {
     this.io.on("connection", (socket) => {
       logger.info(
         { userId: socket.data.userId, socketId: socket.id },
-        "WebSocket connected"
+        "WebSocket connected",
       );
 
       socket.on("disconnect", (reason) => {
         logger.debug(
           { userId: socket.data.userId, socketId: socket.id, reason },
-          "WebSocket disconnected"
+          "WebSocket disconnected",
         );
       });
     });
@@ -139,13 +134,13 @@ class RealtimeService {
     if (!this.io) {
       logger.warn(
         { quoteId: event.quoteId },
-        "WebSocket server not initialized; skipping report:submitted emit"
+        "WebSocket server not initialized; skipping report:submitted emit",
       );
       return;
     }
 
     const uniqueRecipients = Array.from(
-      new Set(event.assignedCleanerIds.filter(Boolean))
+      new Set(event.assignedCleanerIds.filter(Boolean)),
     );
 
     const payload = {
@@ -166,7 +161,7 @@ class RealtimeService {
     if (!this.io) {
       logger.warn(
         { quoteId: event.quoteId, userId: event.userId },
-        "WebSocket server not initialized; skipping quote:assignment emit"
+        "WebSocket server not initialized; skipping quote:assignment emit",
       );
       return;
     }
@@ -188,7 +183,7 @@ class RealtimeService {
     if (!this.io) {
       logger.warn(
         { quoteId: event.quoteId },
-        "WebSocket server not initialized; skipping admin quote-created emit"
+        "WebSocket server not initialized; skipping admin quote-created emit",
       );
       return;
     }
@@ -211,7 +206,7 @@ class RealtimeService {
     if (!this.io) {
       logger.warn(
         { quoteId: event.quoteId, reportId: event.reportId },
-        "WebSocket server not initialized; skipping admin report-submitted emit"
+        "WebSocket server not initialized; skipping admin report-submitted emit",
       );
       return;
     }
@@ -234,7 +229,7 @@ class RealtimeService {
     if (!this.io) {
       logger.warn(
         { quoteId: event.quoteId },
-        "WebSocket server not initialized; skipping admin booking-completed emit"
+        "WebSocket server not initialized; skipping admin booking-completed emit",
       );
       return;
     }
@@ -256,7 +251,7 @@ class RealtimeService {
     if (!this.io) {
       logger.warn(
         { quoteId: event.quoteId, userId: event.userId, status: event.status },
-        "WebSocket server not initialized; skipping quote:status emit"
+        "WebSocket server not initialized; skipping quote:status emit",
       );
       return;
     }
@@ -282,17 +277,18 @@ class RealtimeService {
     return `role:${role}`;
   }
 
-  private emitToAdminRoles(eventName: string, payload: Record<string, unknown>): void {
+  private emitToAdminRoles(
+    eventName: string,
+    payload: Record<string, unknown>,
+  ): void {
     this.io?.to(this.roleRoom("admin")).emit(eventName, payload);
     this.io?.to(this.roleRoom("super_admin")).emit(eventName, payload);
   }
 
   private extractToken(socket: AuthenticatedSocket): string | undefined {
-    const headerToken =
-      (socket.handshake.headers.authorization as string | undefined)?.replace(
-        /^Bearer\s+/i,
-        ""
-      );
+    const headerToken = (
+      socket.handshake.headers.authorization as string | undefined
+    )?.replace(/^Bearer\s+/i, "");
     const authToken =
       typeof socket.handshake.auth?.token === "string"
         ? socket.handshake.auth.token
@@ -309,14 +305,6 @@ class RealtimeService {
       return headerToken;
     }
     return undefined;
-  }
-
-  private parseAllowedOrigins(value?: string): string[] {
-    if (!value) return [];
-    return value
-      .split(",")
-      .map((origin) => origin.trim())
-      .filter(Boolean);
   }
 }
 
