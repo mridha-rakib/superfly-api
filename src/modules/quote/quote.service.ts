@@ -28,7 +28,11 @@ import type {
 } from "./quote.interface";
 import { QuotePricingService } from "./quote.pricing";
 import { QuoteRepository } from "./quote.repository";
-import { formatTimeTo12Hour, normalizeTimeTo24Hour } from "@/utils/time.utils";
+import {
+  formatTimeTo12Hour,
+  normalizeTimeTo24Hour,
+  parseTimeTo24Hour,
+} from "@/utils/time.utils";
 import type {
   AdminQuoteNotificationListResponse,
   AdminQuoteNotificationResponse,
@@ -67,6 +71,12 @@ type QuoteRequestContact = {
   contactName?: string;
   email?: string;
   phoneNumber?: string;
+};
+
+type CleanerAssignmentTimeWindow = {
+  serviceDate: string;
+  startMinutes?: number;
+  endMinutes?: number;
 };
 
 const SCHEDULE_WEEKDAY_TO_INDEX: Record<QuoteScheduleWeekday, number> = {
@@ -696,9 +706,13 @@ export class QuoteService {
     }
 
     if (assignedCleanerIds.length > 0) {
-      await this.assertCleanersAvailableForServiceDate(
+      await this.assertCleanersAvailableForAssignment(
         assignedCleanerIds,
-        resolvedPrimarySchedule.serviceDate,
+        {
+          serviceDate: resolvedPrimarySchedule.serviceDate,
+          preferredTime: resolvedPrimarySchedule.preferredTime,
+          cleaningSchedule,
+        },
       );
     }
 
@@ -1000,9 +1014,9 @@ export class QuoteService {
     );
     const cleaners = await this.resolveCleanerUsers(uniqueCleanerIds);
 
-    await this.assertCleanersAvailableForServiceDate(
+    await this.assertCleanersAvailableForAssignment(
       uniqueCleanerIds,
-      quote.serviceDate,
+      quote,
       quoteId,
     );
 
@@ -2410,22 +2424,23 @@ export class QuoteService {
     );
   }
 
-  private async assertCleanersAvailableForServiceDate(
+  private async assertCleanersAvailableForAssignment(
     cleanerIds: string[],
-    serviceDate: string,
+    assignment: Pick<IQuote, "serviceDate" | "preferredTime" | "cleaningSchedule">,
     excludeQuoteId?: string,
   ): Promise<void> {
     const uniqueCleanerIds = this.normalizeCleanerIds(cleanerIds);
-    const normalizedServiceDate = serviceDate?.toString().trim();
-    if (!uniqueCleanerIds.length || !normalizedServiceDate) {
+    const requestedWindow = this.resolveCleanerAssignmentTimeWindow(assignment);
+
+    if (!uniqueCleanerIds.length || !requestedWindow) {
       return;
     }
 
-    const conflicts = await this.quoteRepository.findCleanerDateConflicts(
+    const conflicts = await this.quoteRepository.findCleanerAssignments(
       uniqueCleanerIds,
-      normalizedServiceDate,
       excludeQuoteId,
     );
+
     if (!conflicts.length) {
       return;
     }
@@ -2434,11 +2449,33 @@ export class QuoteService {
     const conflictingCleanerIds = new Set<string>();
 
     for (const conflict of conflicts) {
+      const conflictDates = this.getOccurrenceDatesForQuote(conflict);
+      if (!conflictDates.includes(requestedWindow.serviceDate)) {
+        continue;
+      }
+
+      const conflictWindow = this.resolveCleanerAssignmentTimeWindow(
+        conflict,
+        requestedWindow.serviceDate,
+      );
+      if (
+        !this.doCleanerAssignmentWindowsOverlap(
+          requestedWindow,
+          conflictWindow,
+        )
+      ) {
+        continue;
+      }
+
       for (const cleanerId of this.extractAssignedCleanerIds(conflict)) {
         if (requestedSet.has(cleanerId.toString())) {
           conflictingCleanerIds.add(cleanerId.toString());
         }
       }
+    }
+
+    if (!conflictingCleanerIds.size) {
+      return;
     }
 
     const conflictingNames: string[] = [];
@@ -2459,8 +2496,160 @@ export class QuoteService {
       : "selected cleaner(s)";
 
     throw new ConflictException(
-      `${label} already assigned to another booking on ${normalizedServiceDate}.`,
+      `${label} already assigned to another booking during an overlapping time slot on ${requestedWindow.serviceDate}.`,
     );
+  }
+
+  private resolveCleanerAssignmentTimeWindow(
+    quote: Pick<IQuote, "serviceDate" | "preferredTime" | "cleaningSchedule">,
+    serviceDateOverride?: string,
+  ): CleanerAssignmentTimeWindow | null {
+    const serviceDate = (
+      serviceDateOverride ||
+      quote.serviceDate ||
+      ""
+    ).toString().trim();
+    if (!serviceDate) {
+      return null;
+    }
+
+    let startValue = quote.preferredTime;
+    let endValue: string | undefined;
+    const schedule = quote.cleaningSchedule as QuoteCleaningSchedule | undefined;
+
+    if (schedule && typeof schedule === "object" && "frequency" in schedule) {
+      if (schedule.frequency === "one_time") {
+        const scheduledDate = schedule.schedule?.date?.toString().trim();
+        if (scheduledDate && scheduledDate !== serviceDate) {
+          return null;
+        }
+
+        startValue = schedule.schedule?.start_time || startValue;
+        endValue = schedule.schedule?.end_time;
+      } else {
+        startValue = schedule.start_time || startValue;
+        endValue = schedule.end_time;
+      }
+    }
+
+    const { startMinutes, endMinutes } = this.parseCleanerAssignmentTimeRange(
+      startValue,
+      endValue,
+    );
+
+    return {
+      serviceDate,
+      startMinutes,
+      endMinutes,
+    };
+  }
+
+  private parseCleanerAssignmentTimeRange(
+    startValue?: string,
+    endValue?: string,
+  ): Pick<CleanerAssignmentTimeWindow, "startMinutes" | "endMinutes"> {
+    const normalizedStartValue = startValue?.toString().trim() || "";
+    const normalizedEndValue = endValue?.toString().trim() || "";
+
+    if (normalizedEndValue) {
+      const startMinutes = this.parseCleanerAssignmentTimeToMinutes(
+        normalizedStartValue,
+      );
+      const endMinutes = this.parseCleanerAssignmentTimeToMinutes(
+        normalizedEndValue,
+      );
+
+      return {
+        startMinutes,
+        endMinutes:
+          startMinutes !== undefined &&
+          endMinutes !== undefined &&
+          endMinutes > startMinutes
+            ? endMinutes
+            : undefined,
+      };
+    }
+
+    const timeRangeMatch = normalizedStartValue.match(
+      /^\s*(.+?)\s*(?:-|\u2013|\u2014|to)\s*(.+?)\s*$/i,
+    );
+
+    if (timeRangeMatch) {
+      const startMinutes = this.parseCleanerAssignmentTimeToMinutes(
+        timeRangeMatch[1],
+      );
+      const endMinutes = this.parseCleanerAssignmentTimeToMinutes(
+        timeRangeMatch[2],
+      );
+
+      return {
+        startMinutes,
+        endMinutes:
+          startMinutes !== undefined &&
+          endMinutes !== undefined &&
+          endMinutes > startMinutes
+            ? endMinutes
+            : undefined,
+      };
+    }
+
+    return {
+      startMinutes: this.parseCleanerAssignmentTimeToMinutes(
+        normalizedStartValue,
+      ),
+      endMinutes: undefined,
+    };
+  }
+
+  private parseCleanerAssignmentTimeToMinutes(
+    value?: string,
+  ): number | undefined {
+    const normalized = parseTimeTo24Hour(value);
+    if (!normalized) {
+      return undefined;
+    }
+
+    return this.timeToMinutes(normalized);
+  }
+
+  private doCleanerAssignmentWindowsOverlap(
+    requestedWindow: CleanerAssignmentTimeWindow,
+    existingWindow: CleanerAssignmentTimeWindow | null,
+  ): boolean {
+    if (!existingWindow || requestedWindow.serviceDate !== existingWindow.serviceDate) {
+      return false;
+    }
+
+    if (
+      requestedWindow.startMinutes === undefined ||
+      existingWindow.startMinutes === undefined
+    ) {
+      return true;
+    }
+
+    const requestedHasEnd =
+      requestedWindow.endMinutes !== undefined &&
+      requestedWindow.endMinutes > requestedWindow.startMinutes;
+    const existingHasEnd =
+      existingWindow.endMinutes !== undefined &&
+      existingWindow.endMinutes > existingWindow.startMinutes;
+
+    if (requestedHasEnd && existingHasEnd) {
+      return (
+        requestedWindow.startMinutes < (existingWindow.endMinutes as number) &&
+        existingWindow.startMinutes < (requestedWindow.endMinutes as number)
+      );
+    }
+
+    if (requestedHasEnd) {
+      return (requestedWindow.endMinutes as number) > existingWindow.startMinutes;
+    }
+
+    if (existingHasEnd) {
+      return requestedWindow.startMinutes < (existingWindow.endMinutes as number);
+    }
+
+    return true;
   }
 
   private haveSameIdSet(left: string[], right: string[]): boolean {

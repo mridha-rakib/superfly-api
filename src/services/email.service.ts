@@ -1,6 +1,7 @@
 // file: src/services/email.service.ts
 
 import { EMAIL_CONFIG, EMAIL_ENABLED } from "@/config/email.config";
+import { DEFAULT_EMAIL_INLINE_LOGO } from "@/constants/email-branding.constants";
 import { APP } from "@/constants/app.constants";
 import { env } from "@/env";
 import { logger } from "@/middlewares/pino-logger";
@@ -125,6 +126,21 @@ type EmailDetailItem = {
 
 type EmailNoticeTone = "neutral" | "success" | "warning";
 
+type InlineEmailAttachment = {
+  contentBase64: string;
+  contentId: string;
+  contentType: string;
+  fileName: string;
+};
+
+type SmtpInlineAttachment = {
+  cid: string;
+  content: string;
+  contentType: string;
+  encoding: "base64";
+  filename: string;
+};
+
 export class EmailService {
   private provider: "postmark" | "smtp" | "disabled";
   private transporter?: Transporter;
@@ -132,7 +148,8 @@ export class EmailService {
   private readonly fromName: string;
   private readonly fromAddress: string;
   private readonly replyTo?: string;
-  private readonly logoUrl?: string;
+  private readonly logoImageSrc?: string;
+  private readonly logoInlineAttachment?: InlineEmailAttachment;
   private readonly brandColor?: string;
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
@@ -146,7 +163,11 @@ export class EmailService {
     this.fromName = EMAIL_CONFIG.from.name;
     this.fromAddress = EMAIL_CONFIG.from.address;
     this.replyTo = EMAIL_CONFIG.replyTo || undefined;
-    this.logoUrl = EMAIL_CONFIG.branding.logoUrl || undefined;
+    const resolvedLogoAsset = this.resolveLogoAsset(
+      EMAIL_CONFIG.branding.logoUrl,
+    );
+    this.logoImageSrc = resolvedLogoAsset.src;
+    this.logoInlineAttachment = resolvedLogoAsset.inlineAttachment;
     this.brandColor = EMAIL_CONFIG.branding.brandColor || undefined;
     this.maxRetries = EMAIL_CONFIG.retry.maxRetries;
     this.retryDelayMs = EMAIL_CONFIG.retry.delayMs;
@@ -982,10 +1003,10 @@ export class EmailService {
     subtitle: string,
     eyebrow: string,
   ): string {
-    const logoMarkup = this.logoUrl?.trim()
+    const logoMarkup = this.logoImageSrc?.trim()
       ? `
         <img
-          src="${this.safeText(this.logoUrl.trim())}"
+          src="${this.safeText(this.logoImageSrc.trim())}"
           alt="${companyName} logo"
           style="display:block; margin:0 auto 18px; max-width:168px; max-height:60px; width:auto; height:auto;"
         />
@@ -1274,6 +1295,67 @@ export class EmailService {
       .trim();
   }
 
+  private resolveLogoAsset(
+    logoUrl?: string | null,
+  ): {
+    inlineAttachment?: InlineEmailAttachment;
+    src?: string;
+  } {
+    const externalLogoUrl = this.normalizeLogoUrl(logoUrl);
+    if (externalLogoUrl) {
+      return {
+        src: externalLogoUrl,
+      };
+    }
+
+    return {
+      inlineAttachment: DEFAULT_EMAIL_INLINE_LOGO,
+      src: `cid:${DEFAULT_EMAIL_INLINE_LOGO.contentId}`,
+    };
+  }
+
+  private normalizeLogoUrl(logoUrl?: string | null): string | undefined {
+    const value = logoUrl?.trim();
+    if (!value) {
+      return undefined;
+    }
+
+    if (value.startsWith("data:image/")) {
+      return value;
+    }
+
+    try {
+      const parsed = new URL(value);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return undefined;
+      }
+
+      const pathName = parsed.pathname.toLowerCase();
+      const imageExtensions = [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".bmp",
+        ".avif",
+      ];
+
+      if (imageExtensions.some(extension => pathName.endsWith(extension))) {
+        return parsed.toString();
+      }
+    } catch {
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  private buildInlineAttachments(): InlineEmailAttachment[] {
+    return this.logoInlineAttachment ? [this.logoInlineAttachment] : [];
+  }
+
   private async sendPostmark(payload: BasicEmailPayload): Promise<void> {
     if (!this.postmarkClient) {
       throw new Error("Postmark client not configured");
@@ -1292,10 +1374,20 @@ export class EmailService {
       TextBody: payload.text,
       MessageStream: this.messageStream,
     };
+    const attachments = this.buildInlineAttachments();
 
     const replyToAddress = payload.replyTo?.trim() || this.replyTo;
     if (replyToAddress) {
       message.ReplyTo = replyToAddress;
+    }
+
+    if (attachments.length > 0) {
+      message.Attachments = attachments.map(attachment => ({
+        Content: attachment.contentBase64,
+        ContentID: `cid:${attachment.contentId}`,
+        ContentType: attachment.contentType,
+        Name: attachment.fileName,
+      }));
     }
 
     if (this.sandboxMode) {
@@ -1315,7 +1407,18 @@ export class EmailService {
       throw new Error("Email from address is not configured");
     }
 
+    const attachments = this.buildInlineAttachments().map(
+      (attachment): SmtpInlineAttachment => ({
+        cid: attachment.contentId,
+        content: attachment.contentBase64,
+        contentType: attachment.contentType,
+        encoding: "base64",
+        filename: attachment.fileName,
+      }),
+    );
+
     await this.transporter.sendMail({
+      attachments,
       from,
       to: payload.to,
       replyTo: payload.replyTo?.trim() || this.replyTo,

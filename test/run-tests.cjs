@@ -7,6 +7,9 @@ const requiredEnv = {
   PORT: "3000",
   MONGO_URI: "https://example.com",
   CLIENT_URL: "https://superflycleaning.com",
+  EMAIL_FROM_NAME: "Superfly Cleaning Services",
+  EMAIL_FROM_ADDRESS: "info@superflycleaning.com",
+  EMAIL_LOGO_URL: "https://postimg.cc/gwFVqz4F",
   JWT_SECRET: "test-access-secret",
   JWT_REFRESH_SECRET: "test-refresh-secret",
   JWT_EXPIRY: "7d",
@@ -25,6 +28,7 @@ Object.assign(process.env, requiredEnv);
 const { AuthUtil } = require("../dist/modules/auth/auth.utils.js");
 const { buildAllowedOrigins, buildSocketCorsOptions, getPreferredCorsOrigin, resolveCorsOrigin } = require("../dist/config/cors.config.js");
 const { HTTPSTATUS } = require("../dist/config/http.config.js");
+const { EmailService } = require("../dist/services/email.service.js");
 const { ErrorCodeEnum } = require("../dist/enums/error-code.enum.js");
 const { QuoteService } = require("../dist/modules/quote/quote.service.js");
 const { UnauthorizedException } = require("../dist/utils/app-error.utils.js");
@@ -149,6 +153,151 @@ const tests = [
       );
       assert.equal(cleanerProgress.length, 1);
       assert.equal(cleanerProgress[0].cleanerId, "69cc531498e8d66773ab2ae5");
+    },
+  },
+  {
+    name: "uses the bundled Superfly logo when EMAIL_LOGO_URL is not a direct image",
+    run() {
+      const service = new EmailService({
+        sendMail: async () => {},
+      });
+
+      const html = service.buildVerificationTemplate(
+        "Admin User",
+        "admin",
+        "654321",
+        "10",
+      );
+
+      assert.match(
+        html,
+        /src="cid:superfly-cleaning-services-logo"/,
+      );
+      assert.ok(!html.includes('src="https://postimg.cc/gwFVqz4F"'));
+    },
+  },
+  {
+    name: "attaches the bundled Superfly logo to SMTP emails",
+    async run() {
+      let capturedMessage;
+      const transporter = {
+        async sendMail(message) {
+          capturedMessage = message;
+        },
+      };
+      const service = new EmailService(transporter);
+
+      await service.sendSmtp({
+        to: "client@example.com",
+        subject: "Test email",
+        html: '<html><body><img src="cid:superfly-cleaning-services-logo" /></body></html>',
+        text: "Test email",
+      });
+
+      assert.ok(capturedMessage);
+      assert.ok(Array.isArray(capturedMessage.attachments));
+      assert.equal(capturedMessage.attachments.length, 1);
+      assert.equal(
+        capturedMessage.attachments[0].cid,
+        "superfly-cleaning-services-logo",
+      );
+      assert.equal(capturedMessage.attachments[0].contentType, "image/png");
+    },
+  },
+  {
+    name: "allows cleaner assignment when same-day time slots do not overlap",
+    async run() {
+      const cleanerId = "69cc531498e8d66773ab2ae5";
+      const service = Object.create(QuoteService.prototype);
+
+      service.quoteRepository = {
+        findCleanerAssignments: async () => [
+          {
+            serviceType: "commercial",
+            serviceDate: "2026-04-03",
+            preferredTime: "09:00",
+            cleaningSchedule: {
+              frequency: "one_time",
+              schedule: {
+                date: "2026-04-03",
+                start_time: "09:00",
+                end_time: "11:00",
+              },
+            },
+            assignedCleanerId: cleanerId,
+            assignedCleanerIds: [cleanerId],
+          },
+        ],
+      };
+      service.userService = {
+        getById: async () => ({ fullName: "Cleaner One" }),
+      };
+
+      await service.assertCleanersAvailableForAssignment([cleanerId], {
+        serviceDate: "2026-04-03",
+        preferredTime: "12:00",
+        cleaningSchedule: {
+          frequency: "one_time",
+          schedule: {
+            date: "2026-04-03",
+            start_time: "12:00",
+            end_time: "14:00",
+          },
+        },
+      });
+    },
+  },
+  {
+    name: "rejects cleaner assignment when same-day time slots overlap",
+    async run() {
+      const cleanerId = "69cc531498e8d66773ab2ae5";
+      const service = Object.create(QuoteService.prototype);
+
+      service.quoteRepository = {
+        findCleanerAssignments: async () => [
+          {
+            serviceType: "commercial",
+            serviceDate: "2026-04-03",
+            preferredTime: "09:00",
+            cleaningSchedule: {
+              frequency: "one_time",
+              schedule: {
+                date: "2026-04-03",
+                start_time: "09:00",
+                end_time: "11:00",
+              },
+            },
+            assignedCleanerId: cleanerId,
+            assignedCleanerIds: [cleanerId],
+          },
+        ],
+      };
+      service.userService = {
+        getById: async () => ({ fullName: "Cleaner One" }),
+      };
+
+      await assert.rejects(
+        () =>
+          service.assertCleanersAvailableForAssignment([cleanerId], {
+            serviceDate: "2026-04-03",
+            preferredTime: "10:00",
+            cleaningSchedule: {
+              frequency: "one_time",
+              schedule: {
+                date: "2026-04-03",
+                start_time: "10:00",
+                end_time: "12:00",
+              },
+            },
+          }),
+        (error) => {
+          assert.equal(
+            error.message,
+            "Cleaner One already assigned to another booking during an overlapping time slot on 2026-04-03.",
+          );
+          return true;
+        },
+      );
     },
   },
 ];

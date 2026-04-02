@@ -9,9 +9,8 @@ export class QuoteRepository extends BaseRepository<IQuote> {
     super(Quote);
   }
 
-  async findCleanerDateConflicts(
+  async findCleanerAssignments(
     cleanerIds: string[],
-    serviceDate: string,
     excludeQuoteId?: string,
   ): Promise<IQuote[]> {
     const objectIds = Array.from(
@@ -23,13 +22,12 @@ export class QuoteRepository extends BaseRepository<IQuote> {
       ),
     );
 
-    if (!objectIds.length || !serviceDate?.trim()) {
+    if (!objectIds.length) {
       return [];
     }
 
     const query: Record<string, any> = {
       isDeleted: { $ne: true },
-      serviceDate: serviceDate.trim(),
       $or: [
         { assignedCleanerId: { $in: objectIds } },
         { assignedCleanerIds: { $in: objectIds } },
@@ -40,7 +38,12 @@ export class QuoteRepository extends BaseRepository<IQuote> {
       query._id = { $ne: new Types.ObjectId(excludeQuoteId) };
     }
 
-    return this.model.find(query).exec();
+    return this.model
+      .find(query)
+      .select(
+        "_id serviceType serviceDate preferredTime cleaningSchedule assignedCleanerId assignedCleanerIds",
+      )
+      .exec();
   }
 
   async softDeleteManyByIds(quoteIds: string[]): Promise<number> {
