@@ -3,6 +3,8 @@ import type { IQuote } from "@/modules/quote/quote.interface";
 import { Quote } from "@/modules/quote/quote.model";
 import { User } from "@/modules/user/user.model";
 import type {
+  CleanerEarningHistoryRow,
+  CleanerEarningsDetail,
   CleanerEarningsRow,
   DashboardEarningsAnalytics,
   DashboardEarningsAnalyticsQuery,
@@ -55,6 +57,13 @@ const formatWeekday = (date: Date) =>
 
 const formatMonth = (date: Date) =>
   date.toLocaleDateString("en-US", { month: "short", timeZone: TIME_ZONE });
+
+const formatMonthYear = (date: Date) =>
+  date.toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: TIME_ZONE,
+  });
 
 const formatDayMonth = (date: Date) =>
   date.toLocaleDateString("en-GB", {
@@ -400,6 +409,7 @@ export class DashboardService {
       : 10;
     const search = query.search?.trim().toLowerCase();
     const serviceTypeFilter = normalizeServiceFilter(query.serviceType);
+    const cleanerIdFilter = query.cleanerId?.trim();
 
     const quotes = await Quote.find({ isDeleted: { $ne: true } })
       .sort({ createdAt: -1 })
@@ -550,6 +560,14 @@ export class DashboardService {
       })
       .sort((a, b) => b.totalEarnings - a.totalEarnings);
 
+    const cleanerDetail = cleanerIdFilter
+      ? this.buildCleanerEarningsDetail(
+          cleanerIdFilter,
+          earningQuotes,
+          cleanerIdentityMap,
+        )
+      : null;
+
     const allRows: EarningsBookingWiseRow[] = earningQuotes.map((quote) => {
       const rawId = quote._id?.toString?.() || "";
       const totalAmount = resolveAmount(quote);
@@ -607,6 +625,7 @@ export class DashboardService {
       },
       serviceWise,
       cleanerWise,
+      cleanerDetail,
       bookingWise: {
         rows: pagedRows,
         pagination: {
@@ -616,6 +635,137 @@ export class DashboardService {
           totalPages,
         },
       },
+    };
+  }
+
+  private buildCleanerEarningsDetail(
+    cleanerId: string,
+    quotes: IQuote[],
+    cleanerIdentityMap: Map<string, { name: string; email?: string }>,
+  ): CleanerEarningsDetail | null {
+    const relevantQuotes = quotes
+      .map((quote) => {
+        const assignedCleanerIds = resolveCleanerIds(quote);
+        if (!assignedCleanerIds.includes(cleanerId)) {
+          return null;
+        }
+
+        const totalAmount = resolveAmount(quote);
+        if (totalAmount <= 0) {
+          return null;
+        }
+
+        const cleanerTotalAmount = resolveCleanerTotalAmount(quote, totalAmount);
+        const earnedAmount = resolvePerCleanerAmount(
+          quote,
+          totalAmount,
+          cleanerTotalAmount,
+          assignedCleanerIds.length,
+        );
+        const effectiveDate =
+          parseDate(quote.serviceDate) || parseDate(quote.createdAt) || new Date();
+
+        return {
+          quote,
+          effectiveDate,
+          earnedAmount: roundAmount(earnedAmount),
+        };
+      })
+      .filter(
+        (
+          row,
+        ): row is { quote: IQuote; effectiveDate: Date; earnedAmount: number } =>
+          Boolean(row),
+      )
+      .sort((a, b) => b.effectiveDate.getTime() - a.effectiveDate.getTime());
+
+    if (!relevantQuotes.length) {
+      return null;
+    }
+
+    const identity = cleanerIdentityMap.get(cleanerId);
+    const now = new Date();
+    const currentWeekStart = startOfWeekUtc(now);
+    const weeklyStartDates = Array.from({ length: 8 }, (_unused, index) =>
+      addDaysUtc(currentWeekStart, -7 * (7 - index)),
+    );
+    const currentMonthStart = startOfMonthUtc(now);
+    const monthlyStartDates = Array.from({ length: 6 }, (_unused, index) =>
+      new Date(
+        Date.UTC(
+          currentMonthStart.getUTCFullYear(),
+          currentMonthStart.getUTCMonth() - (5 - index),
+          1,
+        ),
+      ),
+    );
+
+    const weeklyBuckets = new Map<string, number>();
+    weeklyStartDates.forEach((date) => weeklyBuckets.set(toDateKey(date), 0));
+
+    const monthlyBuckets = new Map<string, number>();
+    monthlyStartDates.forEach((date) => monthlyBuckets.set(toMonthKey(date), 0));
+
+    let totalEarnings = 0;
+    let paidAmount = 0;
+
+    for (const row of relevantQuotes) {
+      totalEarnings += row.earnedAmount;
+      if ((row.quote.paymentStatus || "").toLowerCase() === "paid") {
+        paidAmount += row.earnedAmount;
+      }
+
+      const weekKey = toDateKey(startOfWeekUtc(row.effectiveDate));
+      if (weeklyBuckets.has(weekKey)) {
+        weeklyBuckets.set(weekKey, (weeklyBuckets.get(weekKey) || 0) + row.earnedAmount);
+      }
+
+      const monthKey = toMonthKey(startOfMonthUtc(row.effectiveDate));
+      if (monthlyBuckets.has(monthKey)) {
+        monthlyBuckets.set(monthKey, (monthlyBuckets.get(monthKey) || 0) + row.earnedAmount);
+      }
+    }
+
+    const weekly = weeklyStartDates.map((date) => ({
+      label: formatDayMonth(date),
+      amount: roundAmount(weeklyBuckets.get(toDateKey(date)) || 0),
+    }));
+
+    const monthly = monthlyStartDates.map((date) => ({
+      label: formatMonthYear(date),
+      amount: roundAmount(monthlyBuckets.get(toMonthKey(date)) || 0),
+    }));
+
+    const historyRows: CleanerEarningHistoryRow[] = relevantQuotes.map(({ quote, effectiveDate, earnedAmount }) => {
+      const rawId = quote._id?.toString?.() || "";
+
+      return {
+        id: buildBookingId(quote.serviceType, rawId),
+        rawId,
+        customer: resolveCustomerName(quote),
+        service: mapServiceLabel(quote.serviceType),
+        frequency: formatFrequency(quote.cleaningFrequency),
+        status: formatStatusLabel(quote.status),
+        paymentStatus: formatStatusLabel(quote.paymentStatus),
+        date: formatDayMonth(effectiveDate),
+        earnedAmount,
+      };
+    });
+
+    const totalJobs = historyRows.length;
+
+    return {
+      cleanerId,
+      cleanerName: identity?.name || "Cleaner",
+      cleanerEmail: identity?.email,
+      totalJobs,
+      totalEarnings: roundAmount(totalEarnings),
+      paidAmount: roundAmount(paidAmount),
+      pendingAmount: roundAmount(Math.max(totalEarnings - paidAmount, 0)),
+      averageEarning: roundAmount(totalJobs > 0 ? totalEarnings / totalJobs : 0),
+      weekly,
+      monthly,
+      historyRows,
     };
   }
 

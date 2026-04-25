@@ -3660,7 +3660,7 @@ export class QuoteService {
 
   private ensureRequestContact(contact: QuoteRequestContact): void {
     if (!contact.contactName) {
-      throw new BadRequestException("Name is required");
+      throw new BadRequestException("Full name is required");
     }
     if (!contact.email) {
       throw new BadRequestException("Email address is required");

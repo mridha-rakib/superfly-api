@@ -62,6 +62,32 @@ export type CleanerEarningsRow = {
   averageEarning: number;
 };
 
+export type CleanerEarningHistoryRow = {
+  id: string;
+  rawId: string;
+  customer: string;
+  service: "Residential" | "Commercial" | "Post-Construction";
+  frequency: string;
+  status: string;
+  paymentStatus: string;
+  date: string;
+  earnedAmount: number;
+};
+
+export type CleanerEarningsDetail = {
+  cleanerId: string;
+  cleanerName: string;
+  cleanerEmail?: string;
+  totalJobs: number;
+  totalEarnings: number;
+  paidAmount: number;
+  pendingAmount: number;
+  averageEarning: number;
+  weekly: EarningsPoint[];
+  monthly: EarningsPoint[];
+  historyRows: CleanerEarningHistoryRow[];
+};
+
 export type EarningsBookingWiseRow = {
   id: string;
   rawId: string;
@@ -90,6 +116,7 @@ export type DashboardEarningsAnalytics = {
   summary: EarningsAnalyticsSummary;
   serviceWise: ServiceEarningsRow[];
   cleanerWise: CleanerEarningsRow[];
+  cleanerDetail: CleanerEarningsDetail | null;
   bookingWise: {
     rows: EarningsBookingWiseRow[];
     pagination: DashboardPagination;
@@ -101,4 +128,5 @@ export type DashboardEarningsAnalyticsQuery = {
   limit: number;
   search?: string;
   serviceType?: string;
+  cleanerId?: string;
 };

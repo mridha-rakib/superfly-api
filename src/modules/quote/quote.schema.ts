@@ -1,4 +1,5 @@
 import { QUOTE } from "@/constants/app.constants";
+import { parseTimeTo24Hour } from "@/utils/time.utils";
 import { z } from "zod";
 import {
   QUOTE_SCHEDULE_MONTHS,
@@ -8,6 +9,7 @@ import {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_24H_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const VALID_TIME_MESSAGE = "Time must be a valid time such as 9:00 AM or 09:00";
 
 const serviceSelectionSchema = z.record(
   z.string().min(1),
@@ -66,10 +68,23 @@ const dateStringSchema = z
   .string()
   .trim()
   .regex(DATE_PATTERN, "Date must be YYYY-MM-DD");
-const time24HourSchema = z
-  .string()
-  .trim()
-  .regex(TIME_24H_PATTERN, "Time must be HH:mm");
+const normalizeTimeInput = (value: unknown) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  return parseTimeTo24Hour(trimmed) || trimmed;
+};
+const time24HourSchema = z.preprocess(
+  normalizeTimeInput,
+  z.string().trim().regex(TIME_24H_PATTERN, VALID_TIME_MESSAGE),
+);
+const fullNameSchema = z.string().trim().min(1, "Full name is required").max(200);
 
 const booleanQueryParam = z.preprocess((value) => {
   if (typeof value === "boolean") {
@@ -288,7 +303,7 @@ const baseQuoteSchema = z.object({
   serviceDate: z
     .string()
     .regex(DATE_PATTERN, "Service date must be YYYY-MM-DD"),
-  preferredTime: z.string().trim().min(1).max(60),
+  preferredTime: time24HourSchema,
   paymentFlow: z.enum(["checkout", "intent"]).optional(),
 });
 
@@ -301,7 +316,7 @@ const baseServiceRequestSchema = z
       .trim()
       .regex(DATE_PATTERN, "Preferred date must be YYYY-MM-DD")
       .optional(),
-    preferredTime: z.string().trim().min(1).max(60).optional(),
+    preferredTime: time24HourSchema.optional(),
     cleaningSchedule: cleaningScheduleSchema.optional(),
     specialRequest: z.string().trim().max(500).optional(),
     totalPrice: z.coerce.number().min(0).optional(),
@@ -352,7 +367,7 @@ const baseServiceRequestSchema = z
 export const createAdminServiceRequestSchema = z.object({
   body: baseServiceRequestSchema.safeExtend({
     serviceType: z.enum(["commercial", "post_construction"]),
-    name: z.string().trim().min(1).max(200).optional(),
+    name: fullNameSchema.optional(),
     email: z.string().email("Invalid email format").optional(),
     phoneNumber: z.string().trim().min(6).max(20).optional(),
     specialRequest: z.string().trim().min(1).max(500).optional(),
@@ -389,7 +404,7 @@ const commercialRequirements = {
 
 export const createServiceRequestGuestSchema = z.object({
   body: baseServiceRequestSchema.safeExtend({
-    name: z.string().trim().min(1).max(200),
+    name: fullNameSchema,
     email: z.string().email("Invalid email format"),
     phoneNumber: z.string().trim().min(6).max(20),
   }),
@@ -397,7 +412,7 @@ export const createServiceRequestGuestSchema = z.object({
 
 export const createServiceRequestAuthSchema = z.object({
   body: baseServiceRequestSchema.safeExtend({
-    name: z.string().trim().min(1).max(200).optional(),
+    name: fullNameSchema.optional(),
     email: z.string().email("Invalid email format").optional(),
     phoneNumber: z.string().trim().min(6).max(20).optional(),
   }),
@@ -417,7 +432,7 @@ export const createServiceRequestAdminSchema = z.object({
       QUOTE.SERVICE_TYPES.COMMERCIAL,
       QUOTE.SERVICE_TYPES.POST_CONSTRUCTION,
     ]),
-    name: z.string().trim().min(1).max(200),
+    name: fullNameSchema,
     email: z.string().email("Invalid email format"),
     phoneNumber: z.string().trim().min(6).max(20),
   }),

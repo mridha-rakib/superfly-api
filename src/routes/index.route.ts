@@ -4,6 +4,7 @@ import cleaningServiceRouter from "@/modules/cleaning-service/cleaning-service.r
 import cleaningReportRouter from "@/modules/cleaning-report/cleaning-report.route";
 import contactRouter from "@/modules/contact/contact.route";
 import dashboardRouter from "@/modules/dashboard/dashboard.route";
+import legalContentRouter from "@/modules/legal-content/legal-content.route";
 import quoteRouter from "@/modules/quote/quote.route";
 import reviewRouter from "@/modules/review/review.route";
 import userRouter from "@/modules/user/user.route";
@@ -24,6 +25,10 @@ const moduleRoutes = [
   {
     path: "/dashboard",
     route: dashboardRouter,
+  },
+  {
+    path: "/legal-content",
+    route: legalContentRouter,
   },
   {
     path: "/contact",

@@ -789,7 +789,7 @@ export class EmailService {
         ),
         this.buildDetailsCard("Sender details", [
           {
-            label: "Name",
+            label: "Full Name",
             value: senderName,
           },
           {

@@ -33,12 +33,17 @@ export class DashboardController {
       typeof req.query.serviceType === "string"
         ? req.query.serviceType.trim()
         : undefined;
+    const cleanerId =
+      typeof req.query.cleanerId === "string"
+        ? req.query.cleanerId.trim()
+        : undefined;
 
     const data = await this.dashboardService.getEarningsAnalytics({
       page,
       limit,
       search,
       serviceType,
+      cleanerId,
     });
 
     ApiResponse.success(
