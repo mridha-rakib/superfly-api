@@ -33,6 +33,9 @@ describe("cors config", () => {
     for (const key of Object.keys(requiredEnv)) {
       delete process.env[key];
     }
+
+    delete process.env.ADMIN_URL;
+    delete process.env.ALLOWED_ORIGINS;
   });
 
   it("builds a shared allowlist for website, admin, and local development", async () => {
@@ -85,5 +88,16 @@ describe("cors config", () => {
         "https://ops.superflycleaning.com",
       ]),
     );
+  });
+
+  it("falls back to the preferred admin origin when the request has no origin", async () => {
+    const { resolveCorsOrigin } = await import("../config/cors.config");
+
+    expect(
+      resolveCorsOrigin(undefined, {
+        NODE_ENV: "production",
+        CLIENT_URL: "https://www.superflycleaning.com",
+      }),
+    ).toBe("https://admin.superflycleaning.com");
   });
 });
