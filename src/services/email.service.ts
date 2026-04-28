@@ -110,6 +110,16 @@ type PublicContactMessagePayload = {
   message: string;
 };
 
+type AdminNotificationEmailPayload = {
+  title: string;
+  subject: string;
+  message: string;
+  ctaLabel: string;
+  ctaUrl?: string;
+  previewText?: string;
+  details: EmailDetailItem[];
+};
+
 type EmailTemplateOptions = {
   title?: string;
   subtitle?: string;
@@ -155,6 +165,8 @@ export class EmailService {
   private readonly retryDelayMs: number;
   private readonly messageStream: string;
   private readonly sandboxMode: boolean;
+  private readonly adminNotificationRecipients: string;
+  private readonly supportAddress: string;
   private readonly enabled: boolean;
 
   constructor(transporter?: Transporter) {
@@ -173,6 +185,9 @@ export class EmailService {
     this.retryDelayMs = EMAIL_CONFIG.retry.delayMs;
     this.messageStream = EMAIL_CONFIG.postmark.messageStream;
     this.sandboxMode = EMAIL_CONFIG.postmark.sandboxMode;
+    this.adminNotificationRecipients =
+      EMAIL_CONFIG.adminNotifications.recipients.join(",");
+    this.supportAddress = EMAIL_CONFIG.support.address;
 
     if (transporter) {
       this.transporter = transporter;
@@ -768,7 +783,7 @@ export class EmailService {
   async sendPublicContactMessage(
     payload: PublicContactMessagePayload,
   ): Promise<void> {
-    const contactInbox = this.resolveContactEmail();
+    const contactInbox = this.resolveAdminNotificationRecipients();
     const senderName = payload.name.trim();
     const senderEmail = payload.email.trim().toLowerCase();
     const normalizedSubject = payload.subject.replace(/[\r\n]+/g, " ").trim();
@@ -824,6 +839,32 @@ export class EmailService {
       html,
       text: this.stripHtml(html),
       replyTo: senderEmail,
+    });
+  }
+
+  async sendAdminNotificationEmail(
+    payload: AdminNotificationEmailPayload,
+  ): Promise<void> {
+    const html = this.wrapTemplate(
+      this.joinSections([
+        this.buildLead(payload.message),
+        this.buildDetailsCard("Notification details", payload.details),
+      ]),
+      {
+        title: payload.title,
+        subtitle: "A system notification needs admin review.",
+        eyebrow: "Admin notification",
+        ctaLabel: payload.ctaLabel,
+        ctaUrl: payload.ctaUrl || `${env.CLIENT_URL}/dashboard`,
+        previewText: payload.previewText || payload.message,
+      },
+    );
+
+    await this.send({
+      to: this.resolveAdminNotificationRecipients(),
+      subject: payload.subject,
+      html,
+      text: this.stripHtml(html),
     });
   }
 
@@ -1237,17 +1278,11 @@ export class EmailService {
   }
 
   private resolveContactEmail(): string {
-    const replyTo = this.replyTo?.trim();
-    if (replyTo) {
-      return replyTo;
-    }
+    return this.supportAddress;
+  }
 
-    const fromAddress = this.fromAddress?.trim();
-    if (fromAddress) {
-      return fromAddress;
-    }
-
-    return "support@example.com";
+  private resolveAdminNotificationRecipients(): string {
+    return this.adminNotificationRecipients || this.resolveContactEmail();
   }
 
   private resolveClientBaseUrl(): string {

@@ -64,6 +64,12 @@ export const EMAIL_CONFIG = {
       pass: env.SMTP_PASS,
     },
   },
+  adminNotifications: {
+    recipients: ["Info@superflycleaning.com", "mdiallo@superflycleaning.com"],
+  },
+  support: {
+    address: "contactsupport@superflycleaning.com",
+  },
 } as const;
 
 export const EMAIL_ENABLED = provider !== "disabled";

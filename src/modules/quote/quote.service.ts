@@ -1,4 +1,5 @@
 import { QUOTE, ROLES } from "@/constants/app.constants";
+import { env } from "@/env";
 import { logger } from "@/middlewares/pino-logger";
 import { EmailService } from "@/services/email.service";
 import { realtimeService } from "@/services/realtime.service";
@@ -1025,6 +1026,24 @@ export class QuoteService {
       submittedBy: payload.submittedBy,
       submittedAt: submittedAt.toISOString(),
     });
+
+    await this.sendAdminNotificationEmail({
+      title: "Job report submitted",
+      subject: `Job report submitted for booking #${quote._id.toString()}`,
+      message: `A cleaner submitted a report for ${serviceTypeLabel} booking #${quote._id.toString()} on ${payload.occurrenceDate}.`,
+      ctaLabel: "Open admin dashboard",
+      ctaUrl: this.buildAdminDashboardUrl(),
+      previewText: `Report submitted for booking #${quote._id.toString()}.`,
+      details: [
+        { label: "Booking ID", value: quote._id.toString() },
+        { label: "Service type", value: serviceTypeLabel },
+        { label: "Client", value: clientName },
+        { label: "Client email", value: quote.email },
+        { label: "Service date", value: payload.occurrenceDate || quote.serviceDate },
+        { label: "Preferred time", value: preferredTime },
+        { label: "Submitted by", value: payload.submittedBy },
+      ],
+    });
   }
 
   async notifyAdminBookingCompleted(
@@ -1063,6 +1082,24 @@ export class QuoteService {
       preferredTime,
       status: payload?.status || quote.status,
       completedAt: completedAt.toISOString(),
+    });
+
+    await this.sendAdminNotificationEmail({
+      title: "Booking completed",
+      subject: `Booking completed #${quote._id.toString()}`,
+      message: `${serviceTypeLabel} booking #${quote._id.toString()} for ${clientName} is marked as completed.`,
+      ctaLabel: "Open admin dashboard",
+      ctaUrl: this.buildAdminDashboardUrl(),
+      previewText: `Booking #${quote._id.toString()} completed.`,
+      details: [
+        { label: "Booking ID", value: quote._id.toString() },
+        { label: "Service type", value: serviceTypeLabel },
+        { label: "Client", value: clientName },
+        { label: "Client email", value: quote.email },
+        { label: "Service date", value: quote.serviceDate },
+        { label: "Preferred time", value: preferredTime },
+        { label: "Status", value: payload?.status || quote.status },
+      ],
     });
   }
 
@@ -3764,6 +3801,29 @@ export class QuoteService {
     );
   }
 
+  private async sendAdminNotificationEmail(payload: {
+    title: string;
+    subject: string;
+    message: string;
+    ctaLabel: string;
+    ctaUrl?: string;
+    previewText?: string;
+    details: Array<{ label: string; value?: string | null }>;
+  }): Promise<void> {
+    try {
+      await this.emailService.sendAdminNotificationEmail(payload);
+    } catch (error) {
+      logger.warn(
+        { subject: payload.subject, error },
+        "Admin notification email failed",
+      );
+    }
+  }
+
+  private buildAdminDashboardUrl(): string {
+    return env.ADMIN_URL?.trim() || `${env.CLIENT_URL}/dashboard`;
+  }
+
   private async notifyAdmin(quote: IQuote): Promise<IQuote> {
     const requestedServices = this.resolveRequestedServices(quote);
     const clientName = this.resolveContactName(quote);
@@ -3797,6 +3857,26 @@ export class QuoteService {
       preferredTime,
       companyName: quote.companyName,
       createdAt: new Date().toISOString(),
+    });
+
+    await this.sendAdminNotificationEmail({
+      title: "New booking/quote created",
+      subject: `New ${serviceTypeLabel} booking #${quote._id.toString()}`,
+      message: `${serviceTypeLabel} booking #${quote._id.toString()} was created by ${clientName}.`,
+      ctaLabel: "Open admin dashboard",
+      ctaUrl: this.buildAdminDashboardUrl(),
+      previewText: `New booking from ${clientName}.`,
+      details: [
+        { label: "Booking ID", value: quote._id.toString() },
+        { label: "Service type", value: serviceTypeLabel },
+        { label: "Client", value: clientName },
+        { label: "Client email", value: quote.email },
+        { label: "Phone", value: quote.phoneNumber },
+        { label: "Company", value: quote.companyName },
+        { label: "Address", value: quote.businessAddress },
+        { label: "Service date", value: quote.serviceDate },
+        { label: "Preferred time", value: preferredTime },
+      ],
     });
 
     const update: Partial<IQuote> = {
