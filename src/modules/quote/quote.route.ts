@@ -1,5 +1,6 @@
 import { ROLES } from "@/constants/app.constants";
 import { authMiddleware } from "@/middlewares/auth.middleware";
+import { paymentLimiter } from "@/middlewares/rate-limit.middleware";
 import { Router } from "express";
 import { QuoteController } from "./quote.controller";
 
@@ -8,18 +9,21 @@ const quoteController = new QuoteController();
 
 router.post(
   "/intent",
+  paymentLimiter,
   authMiddleware.optionalAuth,
   quoteController.createPaymentIntent,
 );
 
 router.post(
   "/confirm",
+  paymentLimiter,
   authMiddleware.optionalAuth,
   quoteController.confirmPayment,
 );
 
 router.get(
   "/payment-status",
+  paymentLimiter,
   authMiddleware.optionalAuth,
   quoteController.getPaymentStatus,
 );

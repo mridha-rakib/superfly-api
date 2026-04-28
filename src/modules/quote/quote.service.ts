@@ -25,6 +25,7 @@ import type {
   IQuote,
   IQuoteCleanerOccurrenceProgress,
   IQuoteCleanerProgress,
+  IQuotePaymentDraft,
 } from "./quote.interface";
 import { QuotePricingService } from "./quote.pricing";
 import { QuoteRepository } from "./quote.repository";
@@ -187,22 +188,27 @@ export class QuoteService {
         );
       }
 
-      await this.paymentDraftRepository.create({
-        userId,
-        firstName: contact.firstName!,
-        lastName: contact.lastName!,
-        email: contact.email!,
-        phoneNumber: contact.phoneNumber!,
-        serviceDate,
-        preferredTime,
-        notes: payload.notes?.trim(),
-        services: pricing.items,
-        totalPrice: pricing.total,
-        currency: pricing.currency,
-        paymentIntentId: paymentIntent.id,
-        paymentAmount: amount,
-        paymentStatus: "pending",
-      });
+      try {
+        await this.paymentDraftRepository.create({
+          userId,
+          firstName: contact.firstName!,
+          lastName: contact.lastName!,
+          email: contact.email!,
+          phoneNumber: contact.phoneNumber!,
+          serviceDate,
+          preferredTime,
+          notes: payload.notes?.trim(),
+          services: pricing.items,
+          totalPrice: pricing.total,
+          currency: pricing.currency,
+          paymentIntentId: paymentIntent.id,
+          paymentAmount: amount,
+          paymentStatus: "pending",
+        });
+      } catch (error) {
+        await this.cancelPaymentIntentAfterDraftFailure(paymentIntent.id, error);
+        throw error;
+      }
 
       return {
         flow: "intent",
@@ -247,23 +253,28 @@ export class QuoteService {
 
     const paymentIntentId = this.resolveStripeId(session.payment_intent);
 
-    await this.paymentDraftRepository.create({
-      userId,
-      firstName: contact.firstName!,
-      lastName: contact.lastName!,
-      email: contact.email!,
-      phoneNumber: contact.phoneNumber!,
-      serviceDate,
-      preferredTime,
-      notes: payload.notes?.trim(),
-      services: pricing.items,
-      totalPrice: pricing.total,
-      currency: pricing.currency,
-      paymentIntentId,
-      stripeSessionId: session.id,
-      paymentAmount: amount,
-      paymentStatus: "pending",
-    });
+    try {
+      await this.paymentDraftRepository.create({
+        userId,
+        firstName: contact.firstName!,
+        lastName: contact.lastName!,
+        email: contact.email!,
+        phoneNumber: contact.phoneNumber!,
+        serviceDate,
+        preferredTime,
+        notes: payload.notes?.trim(),
+        services: pricing.items,
+        totalPrice: pricing.total,
+        currency: pricing.currency,
+        paymentIntentId,
+        stripeSessionId: session.id,
+        paymentAmount: amount,
+        paymentStatus: "pending",
+      });
+    } catch (error) {
+      await this.expireCheckoutSessionAfterDraftFailure(session.id, error);
+      throw error;
+    }
 
     return {
       flow: "checkout",
@@ -354,30 +365,20 @@ export class QuoteService {
       throw new BadRequestException("Payment details do not match draft");
     }
 
-    const quote = await this.quoteRepository.create({
-      userId: draft.userId,
-      serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
-      status: QUOTE.STATUSES.PAID,
-      contactName: this.formatContactName(draft.firstName, draft.lastName),
-      firstName: draft.firstName,
-      lastName: draft.lastName,
-      email: draft.email.toLowerCase(),
-      phoneNumber: draft.phoneNumber,
-      serviceDate: draft.serviceDate,
-      preferredTime: draft.preferredTime,
-      notes: draft.notes,
-      services: draft.services,
-      totalPrice: draft.totalPrice,
-      currency: draft.currency,
+    const fulfilled = await this.createPaidResidentialQuoteFromDraft({
+      draft,
       paymentIntentId: draft.paymentIntentId,
-      paymentAmount: draft.paymentAmount,
-      paymentStatus: "paid",
       paidAt: new Date(paymentIntent.created * 1000),
     });
+    const quote = fulfilled.quote;
 
     draft.paymentStatus = "completed";
     draft.quoteId = quote._id.toString();
     await draft.save();
+
+    if (!fulfilled.created) {
+      return this.toResponse(quote);
+    }
 
     const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
     return this.toResponse(finalQuote);
@@ -407,6 +408,21 @@ export class QuoteService {
     throw new BadRequestException(
       "Payment intent or checkout session is required",
     );
+  }
+
+  async fulfillCheckoutSession(
+    checkoutSessionId: string,
+  ): Promise<QuoteResponse | null> {
+    const draft =
+      await this.paymentDraftRepository.findByStripeSessionId(
+        checkoutSessionId,
+      );
+
+    if (!draft) {
+      return null;
+    }
+
+    return this.confirmCheckoutSessionPayment(checkoutSessionId);
   }
 
   private async confirmCheckoutSessionPayment(
@@ -489,28 +505,14 @@ export class QuoteService {
       }
     }
 
-    const quote = await this.quoteRepository.create({
-      userId: draft.userId,
-      serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
-      status: QUOTE.STATUSES.PAID,
-      contactName: this.formatContactName(draft.firstName, draft.lastName),
-      firstName: draft.firstName,
-      lastName: draft.lastName,
-      email: draft.email.toLowerCase(),
-      phoneNumber: draft.phoneNumber,
-      serviceDate: draft.serviceDate,
-      preferredTime: draft.preferredTime,
-      notes: draft.notes,
-      services: draft.services,
-      totalPrice: draft.totalPrice,
-      currency: draft.currency,
+    const fulfilled = await this.createPaidResidentialQuoteFromDraft({
+      draft,
       paymentIntentId: paymentIntentId || draft.paymentIntentId,
-      paymentAmount: draft.paymentAmount,
-      paymentStatus: "paid",
       paidAt: paymentIntent
         ? new Date(paymentIntent.created * 1000)
         : new Date(),
     });
+    const quote = fulfilled.quote;
 
     draft.paymentStatus = "completed";
     draft.quoteId = quote._id.toString();
@@ -519,8 +521,55 @@ export class QuoteService {
     }
     await draft.save();
 
+    if (!fulfilled.created) {
+      return this.toResponse(quote);
+    }
+
     const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
     return this.toResponse(finalQuote);
+  }
+
+  private async createPaidResidentialQuoteFromDraft({
+    draft,
+    paymentIntentId,
+    paidAt,
+  }: {
+    draft: IQuotePaymentDraft;
+    paymentIntentId?: string;
+    paidAt: Date;
+  }): Promise<{ quote: IQuote; created: boolean }> {
+    try {
+      const quote = await this.quoteRepository.create({
+        userId: draft.userId,
+        serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
+        status: QUOTE.STATUSES.PAID,
+        contactName: this.formatContactName(draft.firstName, draft.lastName),
+        firstName: draft.firstName,
+        lastName: draft.lastName,
+        email: draft.email.toLowerCase(),
+        phoneNumber: draft.phoneNumber,
+        serviceDate: draft.serviceDate,
+        preferredTime: draft.preferredTime,
+        notes: draft.notes,
+        services: draft.services,
+        totalPrice: draft.totalPrice,
+        currency: draft.currency,
+        paymentIntentId,
+        paymentAmount: draft.paymentAmount,
+        paymentStatus: "paid",
+        paidAt,
+      });
+      return { quote, created: true };
+    } catch (error) {
+      if (paymentIntentId && this.isDuplicateKeyError(error)) {
+        const existing =
+          await this.quoteRepository.findByPaymentIntentId(paymentIntentId);
+        if (existing) {
+          return { quote: existing, created: false };
+        }
+      }
+      throw error;
+    }
   }
 
   private async getCheckoutSessionStatus(
@@ -615,6 +664,42 @@ export class QuoteService {
       paymentAmount: draft.paymentAmount,
       currency: draft.currency,
     };
+  }
+
+  private async cancelPaymentIntentAfterDraftFailure(
+    paymentIntentId: string,
+    originalError: unknown,
+  ): Promise<void> {
+    try {
+      await stripeService.cancelPaymentIntent(paymentIntentId);
+    } catch (cleanupError) {
+      logger.error(
+        {
+          paymentIntentId,
+          originalError,
+          cleanupError,
+        },
+        "Failed to cancel Stripe payment intent after draft persistence failure",
+      );
+    }
+  }
+
+  private async expireCheckoutSessionAfterDraftFailure(
+    checkoutSessionId: string,
+    originalError: unknown,
+  ): Promise<void> {
+    try {
+      await stripeService.expireCheckoutSession(checkoutSessionId);
+    } catch (cleanupError) {
+      logger.error(
+        {
+          checkoutSessionId,
+          originalError,
+          cleanupError,
+        },
+        "Failed to expire Stripe checkout session after draft persistence failure",
+      );
+    }
   }
 
   async createServiceRequest(
@@ -3668,6 +3753,15 @@ export class QuoteService {
     if (!contact.phoneNumber) {
       throw new BadRequestException("Phone number is required");
     }
+  }
+
+  private isDuplicateKeyError(error: unknown): boolean {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === 11000
+    );
   }
 
   private async notifyAdmin(quote: IQuote): Promise<IQuote> {

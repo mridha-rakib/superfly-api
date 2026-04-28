@@ -26,6 +26,8 @@ export interface IStripeEvent extends Document {
   eventId: string;
   type: string;
   livemode: boolean;
+  status: "processing" | "processed" | "failed";
+  lastError?: string;
   createdAtStripe: Date;
   createdAt: Date;
   updatedAt: Date;

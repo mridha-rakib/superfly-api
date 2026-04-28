@@ -17,6 +17,17 @@ const stripeEventSchema = BaseSchemaUtil.createSchema<IStripeEvent>({
     type: Boolean,
     required: true,
   },
+  status: {
+    type: String,
+    enum: ["processing", "processed", "failed"],
+    required: true,
+    default: "processing",
+    index: true,
+  },
+  lastError: {
+    type: String,
+    trim: true,
+  },
   createdAtStripe: {
     type: Date,
     required: true,

@@ -10,6 +10,7 @@ import type Stripe from "stripe";
 import { CleaningServiceService } from "../cleaning-service/cleaning-service.service";
 import { QuotePaymentDraftRepository } from "../quote/quote-payment.repository";
 import { QuotePricingService } from "../quote/quote.pricing";
+import { QuoteService } from "../quote/quote.service";
 import { UserService } from "../user/user.service";
 import { stripeCheckoutUrls } from "./billing.config";
 import { BillingPaymentRepository } from "./billing.repository";
@@ -26,6 +27,7 @@ export class BillingService {
   private paymentRepository: BillingPaymentRepository;
   private eventRepository: StripeEventRepository;
   private quotePaymentDraftRepository: QuotePaymentDraftRepository;
+  private quoteService: QuoteService;
   private cleaningServiceService: CleaningServiceService;
   private pricingService: QuotePricingService;
   private userService: UserService;
@@ -34,6 +36,7 @@ export class BillingService {
     this.paymentRepository = new BillingPaymentRepository();
     this.eventRepository = new StripeEventRepository();
     this.quotePaymentDraftRepository = new QuotePaymentDraftRepository();
+    this.quoteService = new QuoteService();
     this.cleaningServiceService = new CleaningServiceService();
     this.pricingService = new QuotePricingService();
     this.userService = new UserService();
@@ -134,18 +137,26 @@ export class BillingService {
       throw new BadRequestException("Checkout session URL is missing");
     }
 
-    await this.paymentRepository.create({
-      userId: user._id,
-      internalOrderId,
-      mode,
-      status: "pending",
-      amount: totalAmount,
-      currency,
-      items,
-      stripeSessionId: session.id,
-      stripeCustomerId: this.resolveStripeId(session.customer),
-      paymentIntentId: this.resolveStripeId(session.payment_intent),
-    });
+    try {
+      await this.paymentRepository.create({
+        userId: user._id,
+        internalOrderId,
+        mode,
+        status: "pending",
+        amount: totalAmount,
+        currency,
+        items,
+        stripeSessionId: session.id,
+        stripeCustomerId: this.resolveStripeId(session.customer),
+        paymentIntentId: this.resolveStripeId(session.payment_intent),
+      });
+    } catch (error) {
+      await this.expireCheckoutSessionAfterPaymentPersistenceFailure(
+        session.id,
+        error,
+      );
+      throw error;
+    }
 
     return {
       url: session.url,
@@ -165,74 +176,88 @@ export class BillingService {
       env.STRIPE_WEBHOOK_SECRET,
     );
 
-    const stored = await this.eventRepository.createOnce({
+    const reservedEvent = await this.eventRepository.reserveProcessing({
       eventId: event.id,
       type: event.type,
       livemode: event.livemode,
       createdAtStripe: new Date(event.created * 1000),
     });
-
-    if (!stored) {
+    if (!reservedEvent) {
       return;
     }
 
-    switch (event.type) {
-      case "checkout.session.completed":
-        await this.handleCheckoutSessionCompleted(
-          event.data.object as Stripe.Checkout.Session,
-        );
-        break;
-      case "checkout.session.async_payment_succeeded":
-        await this.updateFromSession(
-          event.data.object as Stripe.Checkout.Session,
-          "paid",
-        );
-        break;
-      case "checkout.session.async_payment_failed":
-        await this.updateFromSession(
-          event.data.object as Stripe.Checkout.Session,
-          "failed",
-        );
-        break;
-      case "checkout.session.expired":
-        await this.updateFromSession(
-          event.data.object as Stripe.Checkout.Session,
-          "canceled",
-        );
-        break;
-      case "payment_intent.succeeded":
-        await this.updateFromPaymentIntent(
-          event.data.object as Stripe.PaymentIntent,
-          "paid",
-        );
-        break;
-      case "payment_intent.created":
-        logger.debug({ eventType: event.type }, "Stripe payment intent created");
-        break;
-      case "payment_intent.payment_failed":
-        await this.updateFromPaymentIntent(
-          event.data.object as Stripe.PaymentIntent,
-          "failed",
-        );
-        break;
-      case "invoice.payment_succeeded":
-        await this.updateFromInvoice(
-          event.data.object as Stripe.Invoice,
-          "paid",
-        );
-        break;
-      case "invoice.payment_failed":
-        await this.updateFromInvoice(
-          event.data.object as Stripe.Invoice,
-          "failed",
-        );
-        break;
-      case "charge.succeeded":
-      case "charge.updated":
-        logger.debug({ eventType: event.type }, "Stripe charge event ignored");
-        break;
-      default:
-        logger.info({ eventType: event.type }, "Unhandled Stripe event");
+    try {
+      switch (event.type) {
+        case "checkout.session.completed":
+          await this.handleCheckoutSessionCompleted(
+            event.data.object as Stripe.Checkout.Session,
+          );
+          break;
+        case "checkout.session.async_payment_succeeded":
+          await this.updateFromSession(
+            event.data.object as Stripe.Checkout.Session,
+            "paid",
+          );
+          await this.fulfillQuoteCheckoutSession(
+            event.data.object as Stripe.Checkout.Session,
+          );
+          break;
+        case "checkout.session.async_payment_failed":
+          await this.updateFromSession(
+            event.data.object as Stripe.Checkout.Session,
+            "failed",
+          );
+          break;
+        case "checkout.session.expired":
+          await this.updateFromSession(
+            event.data.object as Stripe.Checkout.Session,
+            "canceled",
+          );
+          break;
+        case "payment_intent.succeeded":
+          await this.updateFromPaymentIntent(
+            event.data.object as Stripe.PaymentIntent,
+            "paid",
+          );
+          break;
+        case "payment_intent.created":
+          logger.debug(
+            { eventType: event.type },
+            "Stripe payment intent created",
+          );
+          break;
+        case "payment_intent.payment_failed":
+          await this.updateFromPaymentIntent(
+            event.data.object as Stripe.PaymentIntent,
+            "failed",
+          );
+          break;
+        case "invoice.payment_succeeded":
+          await this.updateFromInvoice(
+            event.data.object as Stripe.Invoice,
+            "paid",
+          );
+          break;
+        case "invoice.payment_failed":
+          await this.updateFromInvoice(
+            event.data.object as Stripe.Invoice,
+            "failed",
+          );
+          break;
+        case "charge.succeeded":
+        case "charge.updated":
+          logger.debug({ eventType: event.type }, "Stripe charge event ignored");
+          break;
+        default:
+          logger.info({ eventType: event.type }, "Unhandled Stripe event");
+      }
+
+      await this.eventRepository.markProcessed(event.id);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Webhook processing failed";
+      await this.eventRepository.markFailed(event.id, message);
+      throw error;
     }
   }
 
@@ -241,6 +266,21 @@ export class BillingService {
   ): Promise<void> {
     const status = this.resolvePaymentStatus(session);
     await this.updateFromSession(session, status);
+    if (status === "paid") {
+      await this.fulfillQuoteCheckoutSession(session);
+    }
+  }
+
+  private async fulfillQuoteCheckoutSession(
+    session: Stripe.Checkout.Session,
+  ): Promise<void> {
+    const quote = await this.quoteService.fulfillCheckoutSession(session.id);
+    if (quote) {
+      logger.info(
+        { stripeSessionId: session.id, quoteId: quote._id },
+        "Stripe checkout session fulfilled as quote",
+      );
+    }
   }
 
   private resolvePaymentStatus(
@@ -344,6 +384,49 @@ export class BillingService {
 
     if (invoice.currency) {
       update.currency = invoice.currency;
+    }
+
+    const paymentIntentId = this.resolveStripeId(
+      (invoice as Stripe.Invoice & { payment_intent?: string | { id: string } })
+        .payment_intent,
+    );
+
+    if (!paymentIntentId) {
+      logger.debug(
+        { invoiceId: invoice.id, status },
+        "Stripe invoice event had no payment intent to update",
+      );
+      return;
+    }
+
+    const updated = await this.paymentRepository.updateByPaymentIntentId(
+      paymentIntentId,
+      update,
+    );
+
+    if (!updated) {
+      logger.warn(
+        { invoiceId: invoice.id, paymentIntentId },
+        "Stripe invoice payment intent not tracked",
+      );
+    }
+  }
+
+  private async expireCheckoutSessionAfterPaymentPersistenceFailure(
+    checkoutSessionId: string,
+    originalError: unknown,
+  ): Promise<void> {
+    try {
+      await stripeService.expireCheckoutSession(checkoutSessionId);
+    } catch (cleanupError) {
+      logger.error(
+        {
+          checkoutSessionId,
+          originalError,
+          cleanupError,
+        },
+        "Failed to expire Stripe checkout session after payment persistence failure",
+      );
     }
   }
 

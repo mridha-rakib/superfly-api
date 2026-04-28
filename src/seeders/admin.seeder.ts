@@ -11,7 +11,7 @@ import { hashPassword } from "@/utils/password.utils";
  */
 export class AdminSeeder {
   private static readonly DEFAULT_ADMIN = {
-    email: "info@superflycleaning.com",
+    email: "admin@superflycleaning.com",
     password: "Admin@12345",
     fullName: "Admin User",
     phoneNumber: "+1234567890",

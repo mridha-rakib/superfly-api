@@ -46,8 +46,15 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
 
-  STRIPE_SECRET_KEY: z.string().min(1, "STRIPE_SECRET_KEY is required"),
-  STRIPE_WEBHOOK_SECRET: z.string().min(1, "STRIPE_WEBHOOK_SECRET is required"),
+  STRIPE_SECRET_KEY: z
+    .string()
+    .regex(
+      /^sk_(test|live)_/,
+      "STRIPE_SECRET_KEY must start with sk_test_ or sk_live_",
+    ),
+  STRIPE_WEBHOOK_SECRET: z
+    .string()
+    .regex(/^whsec_/, "STRIPE_WEBHOOK_SECRET must start with whsec_"),
   STRIPE_CHECKOUT_SUCCESS_URL: z.string().min(1).optional(),
   STRIPE_CHECKOUT_CANCEL_URL: z.string().min(1).optional(),
 

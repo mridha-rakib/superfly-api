@@ -94,3 +94,16 @@ export class ForbiddenException extends AppError {
     );
   }
 }
+
+export class ServiceUnavailableException extends AppError {
+  constructor(
+    message = "Service Unavailable",
+    errorCode?: ErrorCodeEnumType,
+  ) {
+    super(
+      message,
+      HTTPSTATUS.SERVICE_UNAVAILABLE,
+      errorCode || ErrorCodeEnum.INTERNAL_SERVER_ERROR,
+    );
+  }
+}

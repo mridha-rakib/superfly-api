@@ -98,6 +98,51 @@ function handleMongoDBError(error: any, requestId?: string) {
   return null;
 }
 
+function sanitizeRequestBody(req: Request) {
+  const url = req.originalUrl || req.url || "";
+  if (url.includes("/billing/webhook")) {
+    return "[stripe webhook body omitted]";
+  }
+
+  if (Buffer.isBuffer(req.body)) {
+    return "[raw request body omitted]";
+  }
+
+  if (
+    url.includes("/quotes/intent") ||
+    url.includes("/quotes/confirm") ||
+    url.includes("/quotes/payment-status") ||
+    url.includes("/billing/checkout-session")
+  ) {
+    return redactSensitiveValues(req.body);
+  }
+
+  return req.body;
+}
+
+function redactSensitiveValues(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveValues(item));
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<
+    Record<string, unknown>
+  >((safe, [key, nestedValue]) => {
+    if (
+      /card|payment|stripe|token|secret|password|authorization/i.test(key)
+    ) {
+      safe[key] = "[redacted]";
+    } else {
+      safe[key] = redactSensitiveValues(nestedValue);
+    }
+    return safe;
+  }, {});
+}
+
 export const errorHandler: ErrorRequestHandler = (
   error,
   req: Request,
@@ -118,7 +163,7 @@ export const errorHandler: ErrorRequestHandler = (
         message: error.message,
         stack: env.NODE_ENV === "development" ? error.stack : undefined,
       },
-      body: req.body,
+      body: sanitizeRequestBody(req),
       params: req.params,
       query: req.query,
     },

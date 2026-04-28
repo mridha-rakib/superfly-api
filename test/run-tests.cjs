@@ -30,10 +30,94 @@ const { buildAllowedOrigins, buildSocketCorsOptions, getPreferredCorsOrigin, res
 const { HTTPSTATUS } = require("../dist/config/http.config.js");
 const { EmailService } = require("../dist/services/email.service.js");
 const { ErrorCodeEnum } = require("../dist/enums/error-code.enum.js");
+const { BillingService } = require("../dist/modules/billing/billing.service.js");
+const { createCheckoutSessionSchema } = require("../dist/modules/billing/billing.schema.js");
 const { QuoteService } = require("../dist/modules/quote/quote.service.js");
 const { UnauthorizedException } = require("../dist/utils/app-error.utils.js");
 
 const tests = [
+  {
+    name: "accepts one-time billing checkout requests without recurring data",
+    async run() {
+      const parsed = await createCheckoutSessionSchema.parseAsync({
+        body: {
+          services: {
+            "standard-cleaning": 1,
+          },
+          mode: "payment",
+        },
+      });
+
+      assert.deepEqual(parsed.body.services, { "standard-cleaning": 1 });
+      assert.equal(parsed.body.mode, "payment");
+    },
+  },
+  {
+    name: "triggers quote fulfillment for paid checkout webhooks",
+    async run() {
+      const service = Object.create(BillingService.prototype);
+      const calls = [];
+
+      service.updateFromSession = async (session, status) => {
+        calls.push({ type: "update", sessionId: session.id, status });
+      };
+      service.fulfillQuoteCheckoutSession = async (session) => {
+        calls.push({ type: "fulfill", sessionId: session.id });
+      };
+
+      await service.handleCheckoutSessionCompleted({
+        id: "cs_paid",
+        payment_status: "paid",
+      });
+
+      assert.deepEqual(calls, [
+        { type: "update", sessionId: "cs_paid", status: "paid" },
+        { type: "fulfill", sessionId: "cs_paid" },
+      ]);
+    },
+  },
+  {
+    name: "does not fulfill quote for pending checkout webhooks",
+    async run() {
+      const service = Object.create(BillingService.prototype);
+      const calls = [];
+
+      service.updateFromSession = async (session, status) => {
+        calls.push({ type: "update", sessionId: session.id, status });
+      };
+      service.fulfillQuoteCheckoutSession = async (session) => {
+        calls.push({ type: "fulfill", sessionId: session.id });
+      };
+
+      await service.handleCheckoutSessionCompleted({
+        id: "cs_pending",
+        payment_status: "unpaid",
+      });
+
+      assert.deepEqual(calls, [
+        { type: "update", sessionId: "cs_pending", status: "pending" },
+      ]);
+    },
+  },
+  {
+    name: "quote checkout fulfillment is a no-op for untracked sessions",
+    async run() {
+      const service = Object.create(QuoteService.prototype);
+      let confirmCalled = false;
+
+      service.paymentDraftRepository = {
+        findByStripeSessionId: async () => null,
+      };
+      service.confirmCheckoutSessionPayment = async () => {
+        confirmCalled = true;
+      };
+
+      const result = await service.fulfillCheckoutSession("cs_untracked");
+
+      assert.equal(result, null);
+      assert.equal(confirmCalled, false);
+    },
+  },
   {
     name: "rejects invalid access tokens",
     run() {
