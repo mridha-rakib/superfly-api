@@ -25,7 +25,7 @@ const app: Application = express();
 app.use(cors(sharedCorsOptions));
 
 app.use(
-  `${env.BASE_URL}/billing/webhook`,
+  `${env.BASE_URL}`,
   express.raw({ type: "application/json" }),
   billingWebhookRouter,
 );
