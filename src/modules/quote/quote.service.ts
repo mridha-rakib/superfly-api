@@ -81,6 +81,18 @@ type CleanerAssignmentTimeWindow = {
   endMinutes?: number;
 };
 
+type AppliedResidentialPromo = {
+  code: string;
+  description: string;
+  originalTotalPrice: number;
+  discountAmount: number;
+  finalTotalPrice: number;
+};
+
+const RESIDENTIAL_FREE_PROMO_CODE = "MARKETING100";
+const RESIDENTIAL_FREE_PROMO_DESCRIPTION =
+  "Residential Clean 100% off";
+
 const SCHEDULE_WEEKDAY_TO_INDEX: Record<QuoteScheduleWeekday, number> = {
   monday: 1,
   tuesday: 2,
@@ -155,8 +167,11 @@ export class QuoteService {
     }
 
     const pricing = this.pricingService.calculate(pricingInput, activeServices);
-    const amount = this.toMinorAmount(pricing.total);
+    const promo = this.resolveResidentialPromo(payload.promoCode, pricing.total);
+    const finalTotal = promo?.finalTotalPrice ?? pricing.total;
+    const amount = this.toMinorAmount(finalTotal);
     const serviceDate = payload.serviceDate.trim();
+    const businessAddress = payload.businessAddress?.trim() || undefined;
     const paymentFlow = payload.paymentFlow || "checkout";
     const normalizedCurrency = pricing.currency.toUpperCase();
 
@@ -164,6 +179,44 @@ export class QuoteService {
       throw new BadRequestException(
         "Only USD is supported for Stripe payments",
       );
+    }
+
+    if (amount <= 0 && promo) {
+      const quote = await this.quoteRepository.create({
+        userId,
+        serviceType: QUOTE.SERVICE_TYPES.RESIDENTIAL,
+        status: QUOTE.STATUSES.PAID,
+        contactName: this.formatContactName(contact.firstName, contact.lastName),
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        email: contact.email!.toLowerCase(),
+        phoneNumber: contact.phoneNumber!,
+        businessAddress,
+        serviceDate,
+        preferredTime,
+        notes: payload.notes?.trim(),
+        services: pricing.items,
+        originalTotalPrice: promo.originalTotalPrice,
+        promoCode: promo.code,
+        promoDiscountAmount: promo.discountAmount,
+        promoDescription: promo.description,
+        totalPrice: promo.finalTotalPrice,
+        currency: pricing.currency,
+        paymentAmount: 0,
+        paymentStatus: "paid",
+        paidAt: new Date(),
+      });
+      const finalQuote = await this.notifyStakeholdersOnQuoteCreated(quote);
+
+      return {
+        flow: "promo",
+        amount: 0,
+        currency: pricing.currency,
+        quote: this.toResponse(finalQuote),
+        promoCode: promo.code,
+        promoDiscountAmount: promo.discountAmount,
+        originalAmount: this.toMinorAmount(promo.originalTotalPrice),
+      };
     }
 
     if (amount <= 0) {
@@ -196,6 +249,7 @@ export class QuoteService {
           lastName: contact.lastName!,
           email: contact.email!,
           phoneNumber: contact.phoneNumber!,
+          businessAddress,
           serviceDate,
           preferredTime,
           notes: payload.notes?.trim(),
@@ -261,6 +315,7 @@ export class QuoteService {
         lastName: contact.lastName!,
         email: contact.email!,
         phoneNumber: contact.phoneNumber!,
+        businessAddress,
         serviceDate,
         preferredTime,
         notes: payload.notes?.trim(),
@@ -549,6 +604,7 @@ export class QuoteService {
         lastName: draft.lastName,
         email: draft.email.toLowerCase(),
         phoneNumber: draft.phoneNumber,
+        businessAddress: draft.businessAddress,
         serviceDate: draft.serviceDate,
         preferredTime: draft.preferredTime,
         notes: draft.notes,
@@ -4658,6 +4714,34 @@ export class QuoteService {
     return normalized;
   }
 
+  private resolveResidentialPromo(
+    promoCode: string | undefined,
+    totalPrice: number,
+  ): AppliedResidentialPromo | undefined {
+    const normalizedCode = promoCode?.trim().toUpperCase();
+    if (!normalizedCode) {
+      return undefined;
+    }
+
+    if (normalizedCode !== RESIDENTIAL_FREE_PROMO_CODE) {
+      throw new BadRequestException("Invalid promo code");
+    }
+
+    if (totalPrice <= 0) {
+      throw new BadRequestException(
+        "Promo code requires at least one selected residential service",
+      );
+    }
+
+    return {
+      code: RESIDENTIAL_FREE_PROMO_CODE,
+      description: RESIDENTIAL_FREE_PROMO_DESCRIPTION,
+      originalTotalPrice: Number(totalPrice.toFixed(2)),
+      discountAmount: Number(totalPrice.toFixed(2)),
+      finalTotalPrice: 0,
+    };
+  }
+
   private normalizeServiceKey(key: string): string {
     const normalized = key
       .trim()
@@ -4812,6 +4896,10 @@ export class QuoteService {
       preferredTime: quote.preferredTime,
       notes: quote.notes,
       services: quote.services,
+      originalTotalPrice: quote.originalTotalPrice,
+      promoCode: quote.promoCode,
+      promoDiscountAmount: quote.promoDiscountAmount,
+      promoDescription: quote.promoDescription,
       totalPrice: quote.totalPrice,
       currency: quote.currency,
       paymentIntentId: quote.paymentIntentId,

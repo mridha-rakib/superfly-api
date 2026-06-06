@@ -11,9 +11,9 @@
   "keywords": [],
   "main": "src/index.ts",
   "scripts": {
-    "start": "node --env-file=.env -r ./tsconfig-paths-bootstrap.js dist/index.js",
-    "dev": "tsx watch --env-file=.env src/index.ts",
-    "build": "tsc",
+    "start": "node api.js && node --env-file=.env -r ./tsconfig-paths-bootstrap.js dist/index.js",
+    "dev": "node api.js && tsx watch --env-file=.env src/index.ts",
+    "build": "node api.js && tsc",
     "lint": "eslint --fix src test",
     "pretest": "npm run build",
     "test": "node -r ./tsconfig-paths-bootstrap.js ./test/run-tests.cjs",

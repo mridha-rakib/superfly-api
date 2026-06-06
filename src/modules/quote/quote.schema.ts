@@ -304,7 +304,9 @@ const baseQuoteSchema = z.object({
     .string()
     .regex(DATE_PATTERN, "Service date must be YYYY-MM-DD"),
   preferredTime: time24HourSchema,
+  businessAddress: z.string().trim().min(3).max(250).optional(),
   paymentFlow: z.enum(["checkout", "intent"]).optional(),
+  promoCode: z.string().trim().max(50).optional(),
 });
 
 const baseServiceRequestSchema = z
