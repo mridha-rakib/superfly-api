@@ -83,6 +83,10 @@ export interface IQuote extends Document {
   generalContractorName?: string;
   generalContractorPhone?: string;
   services?: IQuoteServiceItem[];
+  originalTotalPrice?: number;
+  promoCode?: string;
+  promoDiscountAmount?: number;
+  promoDescription?: string;
   totalPrice?: number;
   currency?: string;
   paymentIntentId?: string;
@@ -119,10 +123,15 @@ export interface IQuotePaymentDraft extends Document {
   lastName: string;
   email: string;
   phoneNumber: string;
+  businessAddress?: string;
   serviceDate: string;
   preferredTime: string;
   notes?: string;
   services: IQuoteServiceItem[];
+  originalTotalPrice?: number;
+  promoCode?: string;
+  promoDiscountAmount?: number;
+  promoDescription?: string;
   totalPrice: number;
   currency: string;
   paymentIntentId?: string;
