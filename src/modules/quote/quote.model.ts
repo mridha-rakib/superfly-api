@@ -109,6 +109,24 @@ const quoteSchema = BaseSchemaUtil.createSchema<IQuote>({
   currency: {
     type: String,
   },
+  originalTotalPrice: {
+    type: Number,
+    min: 0,
+  },
+  promoCode: {
+    type: String,
+    uppercase: true,
+    trim: true,
+    index: true,
+  },
+  promoDiscountAmount: {
+    type: Number,
+    min: 0,
+  },
+  promoDescription: {
+    type: String,
+    trim: true,
+  },
   totalPrice: {
     type: Number,
     min: 0,

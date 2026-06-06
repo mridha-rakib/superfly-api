@@ -32,6 +32,10 @@ const quotePaymentDraftSchema = BaseSchemaUtil.createSchema<IQuotePaymentDraft>(
       required: true,
       trim: true,
     },
+    businessAddress: {
+      type: String,
+      trim: true,
+    },
     serviceDate: {
       type: String,
       required: true,
@@ -59,6 +63,24 @@ const quotePaymentDraftSchema = BaseSchemaUtil.createSchema<IQuotePaymentDraft>(
       type: String,
       required: true,
       default: QUOTE.CURRENCY,
+    },
+    originalTotalPrice: {
+      type: Number,
+      min: 0,
+    },
+    promoCode: {
+      type: String,
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+    promoDiscountAmount: {
+      type: Number,
+      min: 0,
+    },
+    promoDescription: {
+      type: String,
+      trim: true,
     },
     totalPrice: {
       type: Number,

@@ -83,11 +83,13 @@ export type QuoteCreatePayload = {
   lastName?: string;
   email?: string;
   phoneNumber?: string;
+  businessAddress?: string;
   serviceDate: string;
   preferredTime: string;
   notes?: string;
   services: QuoteServiceSelection;
   paymentFlow?: "checkout" | "intent";
+  promoCode?: string;
 };
 
 export type QuoteRequestPayload = {
@@ -141,6 +143,10 @@ export type QuoteResponse = {
   preferredTime?: string;
   notes?: string;
   services?: QuoteServiceItem[];
+  originalTotalPrice?: number;
+  promoCode?: string;
+  promoDiscountAmount?: number;
+  promoDescription?: string;
   totalPrice?: number;
   currency?: string;
   paymentIntentId?: string;
@@ -187,13 +193,17 @@ export type QuoteResponse = {
 };
 
 export type QuotePaymentIntentResponse = {
-  flow: "checkout" | "intent";
+  flow: "checkout" | "intent" | "promo";
   paymentIntentId?: string;
   clientSecret?: string;
   checkoutUrl?: string;
   sessionId?: string;
   amount: number;
   currency: string;
+  quote?: QuoteResponse;
+  promoCode?: string;
+  promoDiscountAmount?: number;
+  originalAmount?: number;
 };
 
 export type QuotePaymentStatusResponse = {
